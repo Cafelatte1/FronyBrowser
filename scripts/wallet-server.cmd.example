@@ -1,0 +1,19 @@
+@echo off
+rem FronyBrowser launcher template. Copy to C:\Users\<account>\wallet-server.cmd (outside the repo),
+rem fill the two keys, then register it with scripts\register-task.ps1.
+rem Env vars live here only - never in the repo. Every name is read in backend\api\src\main.ts.
+rem DPAPI constraint: the task must run as the account that owns the vault, NOT SYSTEM.
+cd /d C:\Users\<account>\projects\FronyBrowser
+set FRONY_SERVICE_KEY=<fauth keygen FronyBrowser>
+set WALLET_BIND=<tailscale ip -4>
+set WALLET_PORT=9420
+set WALLET_ADMIN_CLIENTS=key:<admin device key name>
+set WALLET_UNLOCK_TTL=72h
+set WALLET_KEEPALIVE=off
+set FRONY_AUTH_URL=http://<fronyauth host>:8640/introspect
+set FRONY_AUTH_ISSUER=https://<fronyauth public host>
+set WALLET_PUBLIC_URL=https://<tailnet host>.ts.net/wallet
+set WALLET_DATA_DIR=C:\Users\<account>\AppData\Local\Frony\FronyBrowser\data
+rem Required only when the policy has a require_grant key. Same value as FronyShopping's launcher.
+set FRONY_GRANT_KEY=<shared secret with FronyShopping>
+npx tsx backend\api\src\main.ts >> C:\Users\<account>\AppData\Local\Frony\FronyBrowser\logs\server.log 2>&1

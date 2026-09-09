@@ -1,0 +1,17 @@
+{
+  "name": "@wallet/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "types": "./src/index.ts",
+  "dependencies": {
+    "pngjs": "^7.0.0",
+    "smol-toml": "^1.8.0"
+  },
+  "devDependencies": {
+    "@types/pngjs": "^6.0.5"
+  }
+}

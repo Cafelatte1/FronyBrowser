@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>FronyBrowser 개인정보 보관함</title>
+  <link rel="stylesheet" href="./src/style.css">
+</head>
+<body>
+  <main id="app">
+    <!-- 로그인 화면 -->
+    <section id="view-login" hidden>
+      <h1>FronyBrowser 개인정보 보관함</h1>
+      <p class="muted">관리자 로그인 (FronyAuth 계정)</p>
+      <form id="login-form">
+        <label>아이디<input id="login-user" autocomplete="username" required></label>
+        <label>비밀번호<input id="login-pass" type="password" autocomplete="current-password" required></label>
+        <button type="submit">로그인</button>
+      </form>
+      <p id="login-msg" class="msg" hidden></p>
+    </section>
+
+    <!-- 메인 화면 -->
+    <section id="view-main" hidden>
+      <header>
+        <h1>FronyBrowser 개인정보 보관함</h1>
+        <div class="header-right">
+          <span id="dry-badge" class="badge dry" hidden>DRY RUN</span>
+          <span id="vault-state" class="muted"></span>
+          <button id="btn-dry" class="ghost" hidden></button>
+          <button id="btn-logout" class="ghost">로그아웃</button>
+        </div>
+      </header>
+      <p class="muted">
+        등록한 값은 이 서버 밖으로 나가지 않는다 — 목록·응답에는 이름과 길이만 보인다.
+        제공하고 싶지 않은 항목은 비워두면 된다.
+      </p>
+
+      <div class="passbar">
+        <label>마스터 비밀번호
+          <input id="pass" type="password" autocomplete="off" placeholder="등록·삭제·조회에 필요">
+        </label>
+        <button id="btn-refresh">등록 현황 불러오기 · 서버 보관함 열기</button>
+      </div>
+
+      <div id="sections"></div>
+      <div class="savebar">
+        <button id="btn-save-all">입력한 항목 저장</button>
+        <span class="muted">값을 적은 칸만 저장·덮어쓴다. 비워둔 칸은 건드리지 않는다.</span>
+      </div>
+
+      <section class="card">
+        <h2>기타 (자유 등록)</h2>
+        <div class="free-form">
+          <label>키 이름 (범위.항목 또는 범위.인스턴스.항목)<input id="free-key" placeholder="예: example-shop.payment.pinnumber"></label>
+          <label>타입
+            <select id="free-type">
+              <option>text</option><option>card</option><option>phone</option><option>rrn</option>
+              <option>email</option><option>name</option><option>address</option>
+            </select>
+          </label>
+          <label>값<input id="free-value" type="text" autocomplete="off"></label>
+          <button id="btn-free-save">저장</button>
+        </div>
+        <table id="extra-keys" hidden>
+          <thead><tr><th>키</th><th>타입</th><th>길이</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <p id="msg" class="msg" hidden></p>
+    </section>
+  </main>
+  <script type="module" src="./src/main.ts"></script>
+</body>
+</html>

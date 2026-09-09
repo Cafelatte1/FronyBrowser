@@ -1,0 +1,89 @@
+:root {
+  --fg: #1c1c1e;
+  --muted: #7a7a80;
+  --line: #e4e4e8;
+  --accent: #2f6fdd;
+  --ok: #1a7f37;
+  --err: #b42318;
+  --bg-card: #fafafa;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+  color: var(--fg);
+  background: #fff;
+}
+#app { max-width: 760px; margin: 2.5rem auto; padding: 0 1.25rem 4rem; }
+
+h1 { font-size: 1.35rem; margin: 0 0 .3rem; }
+h2 { font-size: 1.02rem; margin: 0 0 .8rem; }
+.muted { color: var(--muted); font-size: .85rem; }
+
+header { display: flex; justify-content: space-between; align-items: center; }
+.header-right { display: flex; gap: .8rem; align-items: center; }
+
+label { display: block; font-size: .82rem; color: var(--muted); margin-bottom: .8rem; }
+input, select {
+  display: block; width: 100%; margin-top: .25rem;
+  padding: .5rem .6rem; font-size: .95rem;
+  border: 1px solid var(--line); border-radius: 6px;
+}
+input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+
+button {
+  padding: .5rem 1rem; font-size: .9rem; cursor: pointer;
+  border: none; border-radius: 6px; background: var(--accent); color: #fff;
+}
+button.ghost { background: none; color: var(--accent); border: 1px solid var(--line); }
+button.danger { background: none; color: var(--err); border: 1px solid var(--line); padding: .3rem .7rem; }
+button:disabled { opacity: .5; cursor: default; }
+
+#view-login { max-width: 340px; margin: 4rem auto; }
+#view-login button { width: 100%; margin-top: .4rem; }
+
+.passbar {
+  display: flex; gap: .8rem; align-items: end;
+  padding: 1rem; margin: 1.2rem 0; background: var(--bg-card);
+  border: 1px solid var(--line); border-radius: 8px;
+}
+.passbar label { flex: 1; margin: 0; }
+
+.card {
+  border: 1px solid var(--line); border-radius: 8px;
+  padding: 1.1rem 1.25rem; margin-bottom: 1.2rem;
+}
+.card .summary { float: right; font-size: .8rem; color: var(--muted); }
+
+.field-row {
+  display: grid; grid-template-columns: 9.5rem 5.5rem 1fr auto;
+  gap: .6rem; align-items: center; padding: .45rem 0;
+  border-top: 1px solid var(--line);
+}
+.field-row:first-of-type { border-top: none; }
+.field-row .label { font-size: .9rem; }
+.field-row .hint { color: var(--muted); font-size: .75rem; display: block; }
+.field-row input { margin: 0; }
+.field-row button { padding: .35rem .8rem; font-size: .85rem; }
+
+.badge { font-size: .75rem; padding: .15rem .5rem; border-radius: 999px; text-align: center; }
+.badge.filled { background: #e6f4ea; color: var(--ok); }
+.badge.empty { background: #f2f2f5; color: var(--muted); }
+/* dry-run 배지 — 결제가 조용히 빠지는 상태라 헤더에서 가장 눈에 띄어야 한다 */
+.badge.dry { background: var(--err); color: #fff; font-weight: 700; letter-spacing: .05em; padding: .3rem .7rem; }
+
+.savebar { display: flex; gap: .8rem; align-items: center; margin: -.2rem 0 1.4rem; }
+
+.free-form { display: grid; grid-template-columns: 1fr 8rem 1fr auto; gap: .6rem; align-items: end; }
+.free-form label { margin: 0; }
+
+table { width: 100%; border-collapse: collapse; margin-top: .8rem; font-size: .88rem; }
+th, td { text-align: left; padding: .35rem .5rem; border-bottom: 1px solid var(--line); }
+th { color: var(--muted); font-weight: 500; font-size: .78rem; }
+
+.msg { padding: .55rem .8rem; border-radius: 6px; font-size: .88rem; }
+/* 메인 화면 메시지는 토스트 — 스크롤 위치와 무관하게 우상단에 잠깐 떠 있다가 사라진다 */
+#msg { position: fixed; top: 1rem; right: 1rem; z-index: 10; max-width: min(28rem, calc(100vw - 2rem)); box-shadow: 0 4px 16px rgba(0,0,0,.15); }
+.msg.ok { background: #e6f4ea; color: var(--ok); }
+.msg.err { background: #fdecea; color: var(--err); }

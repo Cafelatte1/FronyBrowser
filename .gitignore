@@ -1,0 +1,18 @@
+# 금고·감사로그·세션. 절대 커밋 금지 — 최우선
+data/
+
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.*
+
+# launcher scripts hold service keys; only the .example template is tracked
+*.cmd
+!*.cmd.example
+
+# the real policy lives under the data dir (or WALLET_POLICY); only the example is tracked
+config/policy.toml
+
+# live tests target the operator's own sites and stay local
+backend/test/live/

@@ -1,0 +1,751 @@
+/**
+ * 핸들러 통합 테스트 — 브라우저 없이 가짜 ActionTarget으로.
+ * fill 경로의 정책·금고·감사·응답 규칙(값 미반환)을 검증한다.
+ */
+
+import type { Ref, SessionId } from '@wallet/core';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { DryRun } from '@wallet/core';
+import { VaultLockedError, createMemoryAudit, createMemoryDryRun, createSessionStore, createVault, parsePolicy, writeVaultFile } from '@wallet/core';
+import { describe, expect, it } from 'vitest';
+import { createHandlers } from '@wallet/api';
+import { fakeCipher, fakeTarget, fakeVault } from '../../helpers/fakes.js';
+import { freshGrant } from '../../helpers/fakes.js';
+import type { FakeTargetOptions } from '../../helpers/fakes.js';
+
+const POLICY = parsePolicy(`
+[keys."phone"]
+type = "phone"
+allow_origins = ["https://shop.com"]
+
+[keys."card.number"]
+type = "card"
+allow_origins = ["https://pay.pg.com"]
+require_selector = "input[autocomplete='cc-number']"
+
+[keys."shop.payment.pinnumber"]
+type = "text"
+allow_origins = ["https://shop.com"]
+require_grant = true
+
+[keys."shop.keypad.pin"]
+type = "text"
+allow_origins = ["https://shop.com"]
+input_mode = "keypad"
+keypad_digit_selector = "img.kpd[aria-label='{digit}']"
+
+[keys."shop.keypad.broken"]
+type = "text"
+allow_origins = ["https://shop.com"]
+input_mode = "keypad"
+keypad_digit_selector = "img.kpd[aria-label='{digit}']"
+
+[keys."shop.keypad.grantpin"]
+type = "text"
+allow_origins = ["https://shop.com"]
+require_grant = true
+input_mode = "keypad"
+keypad_digit_selector = "img.kpd[aria-label='{digit}']"
+
+[keys."shop.keypad.sprite"]
+type = "text"
+allow_origins = ["https://shop.com"]
+input_mode = "keypad"
+keypad_digit_resolver = "sprite-template"
+keypad_key_selector = "a.pad-key"
+keypad_cell_selector = "span[class^=pad-pos-]"
+
+[approval]
+amount_fallback = "deny"
+amount_tolerance = "3%"
+
+[origins."https://shop.com"]
+label = "Shop"
+amount_selector = ".total"
+`);
+
+const GRANT_KEY = 'test-grant-key';
+
+function setup(over: FakeTargetOptions = {}, now?: () => number, dryRun?: DryRun) {
+  const state = fakeTarget({ url: 'https://shop.com/checkout', amountText: '15,000원', ...over });
+  const audit = createMemoryAudit();
+  const handlers = createHandlers({
+    vault: fakeVault({ entries: { phone: { type: 'phone', value: '01012345678' }, 'card.number': { type: 'card', value: '1234567812345678' }, 'shop.payment.pinnumber': { type: 'text', value: '1234' }, 'shop.keypad.pin': { type: 'text', value: '739105' }, 'shop.keypad.broken': { type: 'text', value: 'ab-cd' }, 'shop.keypad.grantpin': { type: 'text', value: '5678' }, 'shop.keypad.sprite': { type: 'text', value: '4951' } } }),
+    policy: POLICY,
+    sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2, ...(now ? { now } : {}) }),
+    targets: new Map([['browser', state.target]]),
+    audit,
+    grantKey: GRANT_KEY,
+    ...(dryRun ? { dryRun } : {}),
+  });
+  return { handlers, audit, state };
+}
+
+const caller = { client: 'frony' };
+const ref = '1:e1' as Ref;
+
+async function begin(handlers: ReturnType<typeof createHandlers>, expect?: { maxAmount: number }, origin = 'https://shop.com') {
+  const r = await handlers.session_begin(caller, expect ? { origin, expect } : { origin });
+  if (!r.ok) throw new Error('begin failed');
+  return r.sessionId;
+}
+
+describe('fill', () => {
+  it('플레이스홀더를 치환해 입력하고, 응답에는 키 이름과 길이만 담는다', async () => {
+    const { handlers, audit, state } = setup();
+    const sid = await begin(handlers);
+    const r = await handlers.fill(caller, sid, ref, '{{vault:phone}}');
+    expect(r).toEqual({ ok: true, filledFrom: 'phone', len: 11 });
+    expect(state.filled[0]?.value).toBe('01012345678'); // 브라우저로는 실제 값
+    const fillLog = audit.records.find((x) => x.evt === 'fill');
+    expect(fillLog).toMatchObject({ key: 'phone', len: 11, origin: 'https://shop.com' });
+    expect(JSON.stringify(fillLog)).not.toContain('01012345678'); // 감사 로그에 값 없음 (규칙 5)
+  });
+
+  it('허용되지 않은 프레임 origin은 origin_not_permitted + policy_denied 감사', async () => {
+    const { handlers, audit } = setup({ frameOrigin: 'https://evil.com' });
+    const sid = await begin(handlers);
+    const r = await handlers.fill(caller, sid, ref, '{{vault:phone}}');
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe('origin_not_permitted');
+    expect(audit.records.some((x) => x.evt === 'policy_denied' && x.rule === 'origin')).toBe(true);
+  });
+
+  it('없는 키도 같은 origin_not_permitted — 금고 내용을 탐색당하지 않는다 (8.3)', async () => {
+    const { handlers } = setup();
+    const sid = await begin(handlers);
+    const known = await handlers.fill(caller, sid, ref, '{{vault:card.number}}'); // policy에 있지만 이 origin 불허
+    const unknown = await handlers.fill(caller, sid, ref, '{{vault:no.such.key}}');
+    if (known.ok || unknown.ok) throw new Error('should fail');
+    expect(unknown.error.code).toBe(known.error.code);
+    expect(unknown.error.message).toBe(known.error.message);
+  });
+
+  it('require_selector — 대상 요소가 셀렉터에 안 맞으면 selector_mismatch + policy_denied(selector)', async () => {
+    const denied = setup({ frameOrigin: 'https://pay.pg.com', matches: false });
+    const sid = await begin(denied.handlers);
+    const r = await denied.handlers.fill(caller, sid, ref, '{{vault:card.number}}');
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('selector_mismatch');
+    expect(denied.audit.records.some((x) => x.evt === 'policy_denied' && x.rule === 'selector')).toBe(true);
+    expect(denied.state.filled).toHaveLength(0);
+
+    const allowed = setup({ frameOrigin: 'https://pay.pg.com', matches: true });
+    const sid2 = await begin(allowed.handlers);
+    expect((await allowed.handlers.fill(caller, sid2, ref, '{{vault:card.number}}')).ok).toBe(true);
+  });
+
+  it('플레이스홀더 없는 평문은 정책 검사 없이 그대로 입력된다', async () => {
+    const { handlers, state } = setup();
+    const sid = await begin(handlers);
+    const r = await handlers.fill(caller, sid, ref, '서울시 강남구');
+    expect(r).toEqual({ ok: true, filledFrom: null, len: 7 });
+    expect(state.filled[0]?.value).toBe('서울시 강남구');
+  });
+});
+
+describe('fill + pay grant (FWL-022, 규칙 13)', () => {
+  const PIN = '{{vault:shop.payment.pinnumber}}';
+
+  it('grant 없이는 채우지 않는다 — grant_required + grant_denied(missing)', async () => {
+    const { handlers, audit, state } = setup();
+    const sid = await begin(handlers);
+    const r = await handlers.fill(caller, sid, ref, PIN);
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('grant_required');
+    expect(state.filled).toHaveLength(0); // 브라우저에 아무것도 안 갔다
+    expect(audit.records.some((x) => x.evt === 'grant_denied' && x.reason === 'missing')).toBe(true);
+  });
+
+  it('유효한 grant면 채우고, 감사에 grant:true가 남는다 (토큰 자체는 안 남는다)', async () => {
+    const { handlers, audit, state } = setup();
+    const sid = await begin(handlers);
+    const token = freshGrant(GRANT_KEY, { session_id: String(sid) });
+    const r = await handlers.fill(caller, sid, ref, PIN, token);
+    expect(r).toEqual({ ok: true, filledFrom: 'shop.payment.pinnumber', len: 4 });
+    expect(state.filled[0]?.value).toBe('1234');
+    const fillLog = audit.records.find((x) => x.evt === 'fill');
+    expect(fillLog).toMatchObject({ key: 'shop.payment.pinnumber', grant: true });
+    expect(JSON.stringify(audit.records)).not.toContain(token);
+  });
+
+  it('위조·재사용·타세션 grant는 전부 grant_invalid — 이유는 감사에만 남는다', async () => {
+    const cases: ReadonlyArray<[string, (sid: string) => string, string]> = [
+      ['다른 키로 서명', (sid) => freshGrant('wrong-key', { session_id: sid }), 'bad_signature'],
+      ['다른 세션', () => freshGrant(GRANT_KEY, { session_id: 'sess-other' }), 'session_mismatch'],
+      ['만료', (sid) => {
+        const iat = Math.floor(Date.now() / 1000) - 600;
+        return freshGrant(GRANT_KEY, { session_id: sid, iat, exp: iat + 300 });
+      }, 'expired'],
+      ['쓰레기', () => 'garbage', 'malformed'],
+    ];
+    for (const [label, make, reason] of cases) {
+      const { handlers, audit, state } = setup();
+      const sid = await begin(handlers);
+      const r = await handlers.fill(caller, sid, ref, PIN, make(String(sid)));
+      if (r.ok) throw new Error(`should fail: ${label}`);
+      expect(r.error.code, label).toBe('grant_invalid');
+      expect(r.error.message, label).toBe('pay grant rejected'); // 이유를 호출자에게 알리지 않는다
+      expect(state.filled, label).toHaveLength(0);
+      expect(audit.records.some((x) => x.evt === 'grant_denied' && x.reason === reason), label).toBe(true);
+    }
+  });
+
+  it('같은 grant를 두 번 쓰면 두 번째는 거부된다 — 1회용', async () => {
+    const { handlers, audit } = setup();
+    const sid = await begin(handlers);
+    const token = freshGrant(GRANT_KEY, { session_id: String(sid) });
+    expect((await handlers.fill(caller, sid, ref, PIN, token)).ok).toBe(true);
+    const second = await handlers.fill(caller, sid, ref, PIN, token);
+    if (second.ok) throw new Error('should fail');
+    expect(second.error.code).toBe('grant_invalid');
+    expect(audit.records.some((x) => x.evt === 'grant_denied' && x.reason === 'reused')).toBe(true);
+  });
+
+  it('require_grant가 아닌 키는 grant 없이 그대로 채워진다 — grant는 예외 경로다', async () => {
+    const { handlers, audit } = setup();
+    const sid = await begin(handlers);
+    expect((await handlers.fill(caller, sid, ref, '{{vault:phone}}')).ok).toBe(true);
+    expect(audit.records.find((x) => x.evt === 'fill')).not.toHaveProperty('grant');
+  });
+
+  it('행위가 실패하면 grant는 태워지지 않는다 — 실패한 fill 하나가 결제를 막으면 안 된다 (FWL-033)', async () => {
+    const { handlers, audit, state } = setup();
+    const sid = await begin(handlers);
+    const token = freshGrant(GRANT_KEY, { session_id: String(sid) });
+
+    state.failNext('element_not_actionable');
+    const first = await handlers.fill(caller, sid, ref, PIN, token);
+    if (first.ok) throw new Error('should fail');
+    expect(first.error.code).toBe('element_not_actionable');
+
+    // 같은 grant로 다시 — 태워지지 않았으므로 통과해야 한다
+    expect(await handlers.fill(caller, sid, ref, PIN, token)).toEqual({
+      ok: true,
+      filledFrom: 'shop.payment.pinnumber',
+      len: 4,
+    });
+    // 성공한 뒤에야 1회용이 된다
+    const third = await handlers.fill(caller, sid, ref, PIN, token);
+    if (third.ok) throw new Error('should fail');
+    expect(third.error.code).toBe('grant_invalid');
+    expect(audit.records.some((x) => x.evt === 'grant_denied' && x.reason === 'reused')).toBe(true);
+  });
+});
+
+describe('fill — 보안 키패드 (FWL-033)', () => {
+  it('keypad 키는 값을 채우지 않고 서버가 숫자 버튼을 누른다 — 값은 어디에도 안 남는다', async () => {
+    const { handlers, audit, state } = setup();
+    const sid = await begin(handlers);
+    const r = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.pin}}');
+    expect(r).toEqual({ ok: true, filledFrom: 'shop.keypad.pin', len: 6 });
+    expect(state.filled).toHaveLength(0); // fill intent는 나가지 않는다
+    expect(state.intents).toEqual([
+      { kind: 'keypad', ref, digitSelector: "img.kpd[aria-label='{digit}']", value: '739105' },
+    ]);
+    const fillLog = audit.records.find((x) => x.evt === 'fill');
+    expect(fillLog).toMatchObject({ key: 'shop.keypad.pin', mode: 'keypad', len: 6 });
+    expect(JSON.stringify(fillLog)).not.toContain('739105'); // 감사 로그에 값 없음 (규칙 5)
+    expect(JSON.stringify(r)).not.toContain('739105');
+  });
+
+  it('스프라이트 키패드 키는 keypad_sprite 인텐트로 간다 — 감사에 resolver, 값은 없다 (FWL-038)', async () => {
+    const { handlers, audit, state } = setup();
+    const sid = await begin(handlers);
+    const r = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.sprite}}');
+    expect(r).toEqual({ ok: true, filledFrom: 'shop.keypad.sprite', len: 4 });
+    expect(state.intents).toEqual([
+      { kind: 'keypad_sprite', ref, keySelector: 'a.pad-key', cellSelector: 'span[class^=pad-pos-]', resolver: 'sprite-template', value: '4951' },
+    ]);
+    expect(state.filled).toHaveLength(0);
+    const fillLog = audit.records.find((x) => x.evt === 'fill');
+    expect(fillLog).toMatchObject({ key: 'shop.keypad.sprite', mode: 'keypad', resolver: 'sprite-template', len: 4 });
+    expect(JSON.stringify(fillLog)).not.toContain('4951');
+    // 숫자 규칙은 스프라이트 키패드에도 같다
+    const bad = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.sprite}}{{vault:phone}}');
+    if (bad.ok) throw new Error('should fail');
+    expect(bad.error.code).toBe('bad_request');
+  });
+
+  it('text 키의 fill 감사에는 mode:text가 남는다', async () => {
+    const { handlers, audit } = setup();
+    const sid = await begin(handlers);
+    expect((await handlers.fill(caller, sid, ref, '{{vault:phone}}')).ok).toBe(true);
+    expect(audit.records.find((x) => x.evt === 'fill')).toMatchObject({ mode: 'text' });
+  });
+
+  it('숫자가 아닌 금고 값은 bad_request — 브라우저에 아무것도 안 간다', async () => {
+    const { handlers, audit, state } = setup();
+    const sid = await begin(handlers);
+    const r = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.broken}}');
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('bad_request');
+    expect(state.intents).toHaveLength(0);
+    const denied = audit.records.find((x) => x.evt === 'policy_denied');
+    expect(denied).toMatchObject({ key: 'shop.keypad.broken', rule: 'keypad_digits_only' });
+    expect(JSON.stringify(audit.records)).not.toContain('ab-cd');
+  });
+
+  it('키패드에 여러 키를 이어붙이면 bad_request — 자릿수 대응이 없다', async () => {
+    const { handlers, state } = setup();
+    const sid = await begin(handlers);
+    const r = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.pin}}{{vault:phone}}');
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('bad_request');
+    expect(state.intents).toHaveLength(0);
+  });
+});
+
+describe('vault_handoff (FWL-042)', () => {
+  it('잠겨 있으면 vault_locked, 열려 있으면 인계 파일에 패스프레이즈·만료가 담기고 감사에는 없다', async () => {
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const { consumeUnlockHandoff } = await import('@wallet/core');
+    const { fakeCipher } = await import('../../helpers/fakes.js');
+    const dir = mkdtempSync(join(tmpdir(), 'wallet-handoff-h-'));
+    const handoffFile = join(dir, 'unlock-handoff.dpapi');
+    try {
+      const mk = (vaultOpts: { locked?: boolean; passphrase?: string }) => {
+        const audit = createMemoryAudit();
+        const handlers = createHandlers({ vault: fakeVault(vaultOpts), policy: POLICY, sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }), targets: new Map([['browser', fakeTarget().target]]), audit, handoffFile, handoffCipher: fakeCipher });
+        return { handlers, audit };
+      };
+      const locked = mk({ locked: true });
+      const r0 = await locked.handlers.vault_handoff(caller);
+      if (r0.ok) throw new Error('should fail');
+      expect(r0.error.code).toBe('vault_locked');
+
+      const open = mk({ passphrase: 'pp' });
+      const r = await open.handlers.vault_handoff(caller);
+      expect(r).toMatchObject({ ok: true, remainingMs: 60_000 });
+      const h = consumeUnlockHandoff(handoffFile, Date.now, fakeCipher);
+      expect(h?.passphrase).toBe('pp');
+      expect((h?.unlockedUntil ?? 0) - Date.now()).toBeGreaterThan(50_000);
+      const log = open.audit.records.find((x) => x.evt === 'vault_handoff');
+      expect(log).toMatchObject({ ok: true, remainingMs: 60_000 });
+      expect(JSON.stringify(open.audit.records)).not.toContain('pp');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('fill — dry-run (FWL-035)', () => {
+  const PIN = '{{vault:shop.payment.pinnumber}}';
+
+  it('켜져 있으면 grant 검증·소모까지 하고 입력만 건너뛴다 — 응답은 실제 fill과 같고 감사에만 dry:true', async () => {
+    const { handlers, audit, state } = setup({}, undefined, createMemoryDryRun(true));
+    const sid = await begin(handlers);
+    const token = freshGrant(GRANT_KEY, { session_id: String(sid) });
+    const r = await handlers.fill(caller, sid, ref, PIN, token);
+    expect(r).toEqual({ ok: true, filledFrom: 'shop.payment.pinnumber', len: 4 }); // dry 표식 없음
+    expect(state.filled).toHaveLength(0);
+    expect(state.intents.filter((i) => i.kind === 'fill' || i.kind === 'keypad')).toHaveLength(0);
+    expect(audit.records.find((x) => x.evt === 'fill')).toMatchObject({ key: 'shop.payment.pinnumber', grant: true, dry: true });
+    // grant는 소모됐다 — 같은 토큰은 두 번째에 거부
+    const second = await handlers.fill(caller, sid, ref, PIN, token);
+    if (second.ok) throw new Error('should fail');
+    expect(second.error.code).toBe('grant_invalid');
+  });
+
+  it('키패드 grant 키도 버튼을 하나도 누르지 않는다', async () => {
+    const { handlers, audit, state } = setup({}, undefined, createMemoryDryRun(true));
+    const sid = await begin(handlers);
+    const token = freshGrant(GRANT_KEY, { session_id: String(sid) });
+    const r = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.grantpin}}', token);
+    expect(r).toEqual({ ok: true, filledFrom: 'shop.keypad.grantpin', len: 4 });
+    expect(state.intents.some((i) => i.kind === 'keypad')).toBe(false);
+    expect(audit.records.find((x) => x.evt === 'fill')).toMatchObject({ mode: 'keypad', dry: true });
+  });
+
+  it('켜져 있어도 grant 없으면 여전히 grant_required, 위조면 grant_invalid', async () => {
+    const { handlers } = setup({}, undefined, createMemoryDryRun(true));
+    const sid = await begin(handlers);
+    const none = await handlers.fill(caller, sid, ref, PIN);
+    if (none.ok) throw new Error('should fail');
+    expect(none.error.code).toBe('grant_required');
+    const forged = await handlers.fill(caller, sid, ref, PIN, freshGrant('wrong-key', { session_id: String(sid) }));
+    if (forged.ok) throw new Error('should fail');
+    expect(forged.error.code).toBe('grant_invalid');
+  });
+
+  it('grant가 필요 없는 키는 dry-run과 무관하게 채워진다 — 스위치는 결제 키만 덮는다', async () => {
+    const { handlers, audit, state } = setup({}, undefined, createMemoryDryRun(true));
+    const sid = await begin(handlers);
+    expect((await handlers.fill(caller, sid, ref, '{{vault:phone}}')).ok).toBe(true);
+    expect(state.filled[0]?.value).toBe('01012345678');
+    expect(audit.records.find((x) => x.evt === 'fill')).not.toHaveProperty('dry');
+  });
+
+  it('꺼져 있으면 평소대로 입력한다', async () => {
+    const { handlers, state } = setup({}, undefined, createMemoryDryRun(false));
+    const sid = await begin(handlers);
+    const token = freshGrant(GRANT_KEY, { session_id: String(sid) });
+    expect((await handlers.fill(caller, sid, ref, PIN, token)).ok).toBe(true);
+    expect(state.filled[0]?.value).toBe('1234');
+  });
+});
+
+describe('click + expect 대조', () => {
+  it('금액이 상한 이내면 통과', async () => {
+    const { handlers } = setup({ amountText: '15,000원' });
+    const sid = await begin(handlers, { maxAmount: 16000 });
+    expect((await handlers.click(caller, sid, ref)).ok).toBe(true);
+  });
+
+  it('금액이 상한을 넘으면 amount_mismatch + expect_mismatch 감사', async () => {
+    const { handlers, audit } = setup({ amountText: '152,000원' });
+    const sid = await begin(handlers, { maxAmount: 16000 });
+    const r = await handlers.click(caller, sid, ref);
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('amount_mismatch');
+    expect(audit.records.some((x) => x.evt === 'expect_mismatch')).toBe(true);
+  });
+
+  it('금액 추출 실패는 amount_unavailable (fallback=deny)', async () => {
+    const { handlers } = setup({ amountText: null });
+    const sid = await begin(handlers, { maxAmount: 16000 });
+    const r = await handlers.click(caller, sid, ref);
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('amount_unavailable');
+  });
+
+  it('버튼이 PG iframe 안에 있어도 셀렉터는 세션 origin 정책에서 온다 — 대조가 생략되지 않는다', async () => {
+    const { handlers } = setup({ frameOrigin: 'https://pay.pg.com', amountText: '152,000원' });
+    const sid = await begin(handlers, { maxAmount: 16000 });
+    const r = await handlers.click(caller, sid, ref);
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('amount_mismatch');
+  });
+
+  it('expect가 없으면 대조 없이 클릭한다 — 승인은 예외 경로다', async () => {
+    const { handlers } = setup({ amountText: '999,999,999원' });
+    const sid = await begin(handlers);
+    expect((await handlers.click(caller, sid, ref)).ok).toBe(true);
+  });
+});
+
+describe('세션 이어받기 (FWL-008)', () => {
+  it('session_list — 자기 세션만, 타겟 origin·브라우저·남은 TTL이 보인다', async () => {
+    const { handlers } = setup();
+    const sid = await begin(handlers);
+    await handlers.navigate(caller, sid, 'https://shop.com/cart');
+
+    const mine = await handlers.session_list(caller);
+    if (!mine.ok) throw new Error('should succeed');
+    expect(mine.sessions).toHaveLength(1);
+    expect(mine.sessions[0]).toMatchObject({ sessionId: sid, origin: 'https://shop.com', kind: 'browser', browser: 'chromium', headless: true });
+    expect(mine.sessions[0]!.ttlRemainingMs).toBeGreaterThan(0);
+
+    const others = await handlers.session_list({ client: 'other-device' });
+    if (!others.ok) throw new Error('should succeed');
+    expect(others.sessions).toHaveLength(0);
+  });
+
+  it('session_status — 현재 URL·페이지 수·스냅샷 세대까지 준다', async () => {
+    const { handlers } = setup();
+    const sid = await begin(handlers);
+    const r = await handlers.session_status(caller, sid);
+    if (!r.ok) throw new Error('should succeed');
+    expect(r).toMatchObject({ sessionId: sid, url: 'https://shop.com/checkout', pages: [{ index: 0, url: 'https://shop.com/checkout', current: true }], snapshotGen: 1 });
+  });
+
+  it('session_status — 다른 클라이언트 세션은 session_not_found', async () => {
+    const { handlers } = setup();
+    const sid = await begin(handlers);
+    const r = await handlers.session_status({ client: 'other-device' }, sid);
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('session_not_found');
+  });
+});
+
+describe('세션 TTL', () => {
+  it('sweep_expired — 만료 세션의 브라우저를 닫고 session_end(ttl)를 남긴다; 접근할 때마다 TTL이 연장된다', async () => {
+    let t = 1_000_000;
+    const { handlers, audit, state } = setup({}, () => t);
+    const sid = await begin(handlers);
+    t += 50_000;
+    expect((await handlers.snapshot(caller, sid)).ok).toBe(true); // 접근 → 연장
+    t += 50_000; // 최초 발급 기준으론 만료, 연장 기준으론 아직
+    await handlers.sweep_expired();
+    expect(state.closed).toHaveLength(0);
+    t += 60_000;
+    await handlers.sweep_expired();
+    expect(state.closed).toEqual([sid]);
+    expect(audit.records.find((x) => x.evt === 'session_end')).toMatchObject({ sid, origin: 'https://shop.com', reason: 'ttl' });
+    expect((await handlers.session_begin(caller, { origin: 'https://shop.com' })).ok).toBe(true); // 리스도 풀렸다
+  });
+
+  it('sweep_expired — 금고 TTL 만료(열림→잠김)를 vault_lock 감사로 남긴다', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wallet-handlers-'));
+    const file = join(dir, 'vault.dpapi');
+    writeVaultFile(file, 'pp', new Map([['phone', { type: 'phone', value: '01012345678' }]]), fakeCipher);
+    let t = 0;
+    const vault = createVault(file, { cipher: fakeCipher, ttlMs: 1_000, now: () => t });
+    const audit = createMemoryAudit();
+    const handlers = createHandlers({ vault, policy: POLICY, sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }), targets: new Map([['browser', fakeTarget().target]]), audit });
+    await handlers.sweep_expired();
+    expect(audit.records.filter((x) => x.evt === 'vault_lock')).toHaveLength(0); // 처음부터 잠김 — 전이 아님
+    await vault.unlock('pp');
+    await handlers.sweep_expired();
+    t += 1_000; // TTL 만료
+    await handlers.sweep_expired();
+    await handlers.sweep_expired();
+    expect(audit.records.filter((x) => x.evt === 'vault_lock')).toEqual([expect.objectContaining({ reason: 'ttl' })]); // 전이 1회만
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('wait의 timeoutMs는 1ms~30s로 묶인다 — 0은 Playwright에서 무제한이다', async () => {
+    const { handlers, state } = setup();
+    const sid = await begin(handlers);
+    await handlers.wait(caller, sid, ref, 0);
+    await handlers.wait(caller, sid, ref, 999_999);
+    const waits = state.intents.filter((i) => i.kind === 'wait').map((i) => (i as { timeoutMs: number }).timeoutMs);
+    expect(waits).toEqual([1, 30_000]);
+  });
+});
+
+describe('로그인 쿠키 재저장 (FWL-026)', () => {
+  it('session_end은 loggedIn=true일 때만 persist — false·생략은 저장하지 않는다', async () => {
+    const { handlers, audit, state } = setup();
+    const a = await begin(handlers);
+    await handlers.session_end(caller, a, true);
+    const b = await begin(handlers);
+    await handlers.session_end(caller, b, false);
+    const c = await begin(handlers);
+    await handlers.session_end(caller, c);
+    expect(state.closeCalls).toEqual([
+      { id: a, persist: true },
+      { id: b, persist: false },
+      { id: c, persist: false },
+    ]);
+    // 감사에는 불리언 또는 null만 남는다
+    expect(audit.records.filter((x) => x.evt === 'session_end').map((x) => x.loggedIn)).toEqual([true, false, null]);
+  });
+
+  it('sweep_expired로 닫히는 세션은 persist하지 않는다 — 단언 없는 종료다', async () => {
+    let t = 1_000_000;
+    const { handlers, state } = setup({}, () => t);
+    const sid = await begin(handlers);
+    t += 120_000;
+    await handlers.sweep_expired();
+    expect(state.closeCalls).toEqual([{ id: sid, persist: false }]);
+  });
+});
+
+describe('세션 경계', () => {
+  it('다른 클라이언트의 세션 id로는 접근할 수 없다', async () => {
+    const { handlers } = setup();
+    const sid = await begin(handlers);
+    const r = await handlers.snapshot({ client: 'other-device' }, sid);
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('session_not_found');
+  });
+
+});
+
+describe('세션 = origin 하나 (FWL-017)', () => {
+  it('같은 클라이언트의 두 번째 begin은 이전 세션을 닫고 이어받는다 — session_end reason replaced (FWL-036)', async () => {
+    const { target, closed } = fakeTarget();
+    const audit = createMemoryAudit();
+    const handlers = createHandlers({
+      vault: fakeVault(), policy: POLICY, sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }), targets: new Map([['browser', target]]), audit,
+    });
+    const first = await handlers.session_begin(caller, { origin: 'https://shop.com' });
+    if (!first.ok) throw new Error('first begin failed');
+    const second = await handlers.session_begin(caller, { origin: 'https://shop.com' });
+    expect(second.ok).toBe(true);
+    expect(closed).toContain(first.sessionId);
+    const end = audit.records.find((r) => r.evt === 'session_end' && r.sid === first.sessionId);
+    expect(end?.['reason']).toBe('replaced');
+    expect((await handlers.session_status(caller, first.sessionId as SessionId)).ok).toBe(false);
+    // 다른 클라이언트는 여전히 막힌다
+    const other = await handlers.session_begin({ ...caller, client: 'key:other' }, { origin: 'https://shop.com' });
+    expect(other.ok).toBe(false);
+    if (!other.ok) expect(other.error.code).toBe('lease_conflict');
+  });
+
+  it('begin이 리스를 잡는다 — 다른 클라이언트의 두 번째 begin은 lease_conflict, end 후 재획득', async () => {
+    const { handlers, audit } = setup();
+    const other = { client: 'key:other' };
+    const a = await begin(handlers);
+    const r = await handlers.session_begin(other, { origin: 'https://shop.com' });
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('lease_conflict');
+    expect(audit.records.find((x) => x.evt === 'session_begin')).toMatchObject({ origin: 'https://shop.com', kind: 'browser', profile: { kind: 'browser', browser: 'chromium', headless: true } });
+    await handlers.session_end(caller, a);
+    expect((await handlers.session_begin(other, { origin: 'https://shop.com' })).ok).toBe(true);
+  });
+
+  it('origin이 없거나 정확한 origin이 아니면 bad_request', async () => {
+    const { handlers } = setup();
+    for (const origin of [undefined, '', 'shop.com', 'https://shop.com/cart', 'ftp://shop.com']) {
+      const r = await handlers.session_begin(caller, { origin: origin as string });
+      if (r.ok) throw new Error(`should fail: ${origin}`);
+      expect(r.error.code).toBe('bad_request');
+    }
+  });
+
+  it('navigate는 타겟 origin 안에서만 — 다른 origin은 origin_not_permitted + policy_denied 감사', async () => {
+    const { handlers, audit } = setup();
+    const sid = await begin(handlers);
+    expect((await handlers.navigate(caller, sid, 'https://shop.com/cart')).ok).toBe(true);
+    const r = await handlers.navigate(caller, sid, 'https://other.com/');
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('origin_not_permitted');
+    expect(audit.records.some((x) => x.evt === 'policy_denied' && x.rule === 'session_origin')).toBe(true);
+  });
+
+  it('브라우저 엔진·모드는 정책의 origins.browser/headless에서 온다', async () => {
+    const { target, opened } = fakeTarget();
+    const handlers = createHandlers({
+      vault: fakeVault(),
+      policy: parsePolicy('[origins."https://bot.example"]\nlabel="b"\nbrowser="chrome"\nheadless=false\n'),
+      sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }),
+      targets: new Map([['browser', target]]),
+      audit: createMemoryAudit(),
+    });
+    const r = await handlers.session_begin(caller, { origin: 'https://bot.example' });
+    expect(r.ok).toBe(true);
+    expect(opened[0]).toEqual({ origin: 'https://bot.example', kind: 'browser', browser: 'chrome', headless: false });
+  });
+
+  it('origins.kind가 가리키는 타겟으로 라우팅된다 — 브라우저 타겟은 건드리지 않는다 (FWL-037)', async () => {
+    const browser = fakeTarget();
+    const stub = fakeTarget({ url: 'https://stub.example/' });
+    const handlers = createHandlers({
+      vault: fakeVault(),
+      policy: parsePolicy('[origins."https://stub.example"]\nlabel="s"\nkind="stub"\n'),
+      sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }),
+      targets: new Map([['browser', browser.target], ['stub', stub.target]]),
+      audit: createMemoryAudit(),
+    });
+    const r = await handlers.session_begin(caller, { origin: 'https://stub.example' });
+    if (!r.ok) throw new Error(r.error.code);
+    expect(stub.opened[0]).toEqual({ origin: 'https://stub.example', kind: 'stub' });
+    expect(browser.opened).toHaveLength(0);
+    const sid = r.sessionId as SessionId;
+    expect((await handlers.snapshot(caller, sid)).ok).toBe(true);
+    expect((await handlers.click(caller, sid, '1:e1' as Ref)).ok).toBe(true);
+    expect(browser.intents).toHaveLength(0);
+    expect(stub.intents.length).toBeGreaterThan(0);
+    expect(await handlers.session_status(caller, sid)).toMatchObject({ kind: 'stub', origin: 'https://stub.example' });
+    expect((await handlers.session_status(caller, sid)) as object).not.toHaveProperty('browser');
+  });
+
+  it('정책이 등록되지 않은 kind를 가리키면 기동을 거부한다 (FWL-037)', () => {
+    expect(() => createHandlers({
+      vault: fakeVault(),
+      policy: parsePolicy('[origins."https://stub.example"]\nlabel="s"\nkind="stub"\n'),
+      sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }),
+      targets: new Map([['browser', fakeTarget().target]]),
+      audit: createMemoryAudit(),
+    })).toThrow(/kind "stub"/);
+  });
+});
+
+describe('저장 로그인 힌트 (FWL-046) — 서버는 주입 여부만 알리고 로그인 판단은 에이전트가 한다', () => {
+  const POLICY = parsePolicy('[origins."https://shop.com"]\nlabel="Shop"\n');
+
+  function setup(over: FakeTargetOptions = {}) {
+    const state = fakeTarget({ url: 'https://shop.com/', ...over });
+    const audit = createMemoryAudit();
+    const handlers = createHandlers({
+      vault: fakeVault(),
+      policy: POLICY,
+      sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }),
+      targets: new Map([['browser', state.target]]),
+      audit,
+    });
+    return { handlers, audit, state };
+  }
+
+  async function sessionCount(handlers: ReturnType<typeof createHandlers>): Promise<number> {
+    const list = await handlers.session_list(caller);
+    return list.ok ? list.sessions.length : -1;
+  }
+
+  it('저장 컨텍스트를 주입했으면 storedLogin:true — begin에서 페이지로 이동하지 않는다', async () => {
+    const { handlers, state } = setup({ storedLogin: true });
+    const r = await handlers.session_begin(caller, { origin: 'https://shop.com' });
+    if (!r.ok) throw new Error('should open');
+    expect(r.storedLogin).toBe(true);
+    expect(state.visited).toEqual([]);
+  });
+
+  it('저장 컨텍스트가 없으면 storedLogin:false — 세션은 열린다', async () => {
+    const { handlers, state } = setup();
+    const r = await handlers.session_begin(caller, { origin: 'https://shop.com' });
+    if (!r.ok) throw new Error('should open');
+    expect(r.storedLogin).toBe(false);
+    expect(state.closed).toEqual([]);
+    expect(await sessionCount(handlers)).toBe(1);
+  });
+
+  it('저장 로그인이 있는 origin인데 금고가 잠겨 있으면 vault_locked — 세션이 남지 않는다', async () => {
+    // main.ts의 storageStateFor가 던지는 예외가 open() 밖으로 그대로 나온다
+    const { handlers } = setup({ openError: new VaultLockedError() });
+    const r = await handlers.session_begin(caller, { origin: 'https://shop.com' });
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('vault_locked');
+    expect(await sessionCount(handlers)).toBe(0);
+  });
+});
+
+describe('감사 로그로 세션 재구성 (FWL-030)', () => {
+  it('실패한 click은 action_failed로 남는다 — 코드와 ref만', async () => {
+    const { handlers, audit, state } = setup();
+    const sid = await begin(handlers);
+    state.failNext('element_not_actionable');
+    const r = await handlers.click(caller, sid, ref);
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('element_not_actionable');
+    expect(audit.records.find((x) => x.evt === 'action_failed')).toMatchObject({
+      sid,
+      kind: 'click',
+      ref: '1:e1',
+      code: 'element_not_actionable',
+    });
+    expect(audit.records.some((x) => x.evt === 'click')).toBe(false); // 성공 이벤트는 없다
+  });
+
+  it('실패한 navigate도 남는다 — 어디서 멈췄는지가 보여야 한다', async () => {
+    const { handlers, audit, state } = setup();
+    const sid = await begin(handlers);
+    state.failNext('navigation_failed');
+    const r = await handlers.navigate(caller, sid, 'https://shop.com/cart');
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('navigation_failed');
+    expect(audit.records.find((x) => x.evt === 'action_failed')).toMatchObject({
+      kind: 'navigate',
+      code: 'navigation_failed',
+      origin: 'https://shop.com',
+    });
+  });
+
+  it('snapshot은 세대와 페이지 수를 남긴다 — 트리 본문은 남기지 않는다', async () => {
+    const { handlers, audit } = setup({ tree: '- textbox "비밀번호" [ref=1:e1]' });
+    const sid = await begin(handlers);
+    expect((await handlers.snapshot(caller, sid)).ok).toBe(true);
+    const log = audit.records.find((x) => x.evt === 'snapshot');
+    expect(log).toMatchObject({ sid, generation: 1, pages: 1 });
+    expect(JSON.stringify(log)).not.toContain('비밀번호'); // 규칙 5
+  });
+
+  it('성공한 click 감사에는 누른 요소의 role이 실린다', async () => {
+    const { handlers, audit } = setup();
+    const sid = await begin(handlers);
+    expect((await handlers.click(caller, sid, ref)).ok).toBe(true);
+    expect(audit.records.find((x) => x.evt === 'click')).toMatchObject({ ref: '1:e1', role: 'button' });
+  });
+
+  it('wait도 감사에 남는다 — ref와 실제로 적용된 timeoutMs', async () => {
+    const { handlers, audit } = setup();
+    const sid = await begin(handlers);
+    await handlers.wait(caller, sid, ref, 0);
+    expect(audit.records.find((x) => x.evt === 'wait')).toMatchObject({ ref: '1:e1', timeoutMs: 1 });
+  });
+});
