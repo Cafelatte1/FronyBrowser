@@ -1,76 +1,137 @@
 <!doctype html>
-<html lang="ko">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FronyBrowser 개인정보 보관함</title>
+  <title>FronyBrowser · Personal data vault</title>
+  <link rel="icon" href="./brand/frony-mark.ico">
+  <link rel="stylesheet" href="/ds/tokens.css">
   <link rel="stylesheet" href="./src/style.css">
 </head>
 <body>
-  <main id="app">
-    <!-- 로그인 화면 -->
-    <section id="view-login" hidden>
-      <h1>FronyBrowser 개인정보 보관함</h1>
-      <p class="muted">관리자 로그인 (FronyAuth 계정)</p>
-      <form id="login-form">
-        <label>아이디<input id="login-user" autocomplete="username" required></label>
-        <label>비밀번호<input id="login-pass" type="password" autocomplete="current-password" required></label>
-        <button type="submit">로그인</button>
-      </form>
-      <p id="login-msg" class="msg" hidden></p>
-    </section>
+  <!-- 로그인 화면 -->
+  <section id="view-login" class="login" hidden>
+    <div class="brand">
+      <img src="./brand/frony-mark.ico" alt="">
+      <span class="brand-name"><b>FRONY</b><i></i><span>Browser</span></span>
+    </div>
+    <div>
+      <h1 class="display">Personal data vault</h1>
+      <p class="caption muted">Admin sign-in with your FronyAuth account. The vault's master password is asked for separately, on every write.</p>
+    </div>
+    <form id="login-form" class="login-card">
+      <div class="float">
+        <label for="login-user">Username</label>
+        <input id="login-user" autocomplete="username" required>
+      </div>
+      <div class="float">
+        <label for="login-pass">Password</label>
+        <input id="login-pass" type="password" autocomplete="current-password" required>
+      </div>
+      <p id="login-msg" class="alert danger" hidden></p>
+      <button type="submit" class="primary wide">Sign in</button>
+    </form>
+    <p class="meta disabled">Reachable on the server's Tailscale address or loopback only. Every attempt is written to the audit log.</p>
+  </section>
 
-    <!-- 메인 화면 -->
-    <section id="view-main" hidden>
-      <header>
-        <h1>FronyBrowser 개인정보 보관함</h1>
-        <div class="header-right">
-          <span id="dry-badge" class="badge dry" hidden>DRY RUN</span>
-          <span id="vault-state" class="muted"></span>
-          <button id="btn-dry" class="ghost" hidden></button>
-          <button id="btn-logout" class="ghost">로그아웃</button>
-        </div>
-      </header>
-      <p class="muted">
-        등록한 값은 이 서버 밖으로 나가지 않는다 — 목록·응답에는 이름과 길이만 보인다.
-        제공하고 싶지 않은 항목은 비워두면 된다.
-      </p>
-
-      <div class="passbar">
-        <label>마스터 비밀번호
-          <input id="pass" type="password" autocomplete="off" placeholder="등록·삭제·조회에 필요">
-        </label>
-        <button id="btn-refresh">등록 현황 불러오기 · 서버 보관함 열기</button>
+  <!-- 메인 화면 -->
+  <section id="view-main" class="shell" hidden>
+    <aside class="rail">
+      <div class="brand">
+        <img src="./brand/frony-mark.ico" alt="">
+        <span class="brand-name"><b>FRONY</b><i></i><span>Browser</span></span>
       </div>
 
-      <div id="sections"></div>
+      <div id="vault-open" class="status-card" hidden>
+        <span class="status-title"><i class="dot success"></i>Vault open</span>
+        <div>
+          <div id="vault-remain" class="mono big">–</div>
+          <div class="meta muted">until it locks itself · agents can fill</div>
+        </div>
+        <div class="bar"><div id="vault-bar"></div></div>
+        <button class="btn-unlock accent-outline">Extend with master password</button>
+      </div>
+      <div id="vault-locked" class="status-card warning" hidden>
+        <span class="status-title"><i class="dot warning"></i>Vault locked</span>
+        <div class="meta">Every agent fill is failing right now. You can still register values here — they just cannot be used until the vault is opened.</div>
+        <button class="btn-unlock warning-outline">Open with master password</button>
+      </div>
+      <div id="vault-missing" class="status-card dashed" hidden>
+        <span class="status-title muted"><i class="dot disabled"></i>No vault yet</span>
+        <div class="meta muted">The master password you use on your first save becomes the one for this vault. There is no way to recover it.</div>
+      </div>
+      <div id="vault-offline" class="status-card warning" hidden>
+        <span class="status-title"><i class="dot warning"></i>Server unreachable</span>
+      </div>
+
+      <nav id="nav" class="nav">
+        <div class="nav-heading">KEY GROUPS</div>
+      </nav>
+
+      <div class="rail-foot">
+        <div id="dry-on" class="dry-card" hidden>
+          <span class="dry-title">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3.2 2.6 16.2h14.8L10 3.2Z" stroke-linejoin="round"/><path d="M10 8v3.4M10 13.6h.01" stroke-linecap="round"/></svg>
+            DRY RUN
+          </span>
+          <span class="meta">Payment PINs are checked against their grant but never typed — a live run finishes as if it had paid.</span>
+          <button id="btn-dry-off" class="danger-outline small">Turn off</button>
+        </div>
+        <div id="dry-off" class="dry-row" hidden>
+          <span class="meta muted"><i class="dot disabled"></i>Payments live</span>
+          <button id="btn-dry-on" class="ghost tiny">DRY RUN</button>
+        </div>
+        <button id="btn-logout" class="ghost small">Sign out</button>
+      </div>
+    </aside>
+
+    <div class="content">
+      <div id="panes"></div>
+
+      <div id="pane-add" class="pane" hidden>
+        <header class="pane-head">
+          <h1 class="display">Add a key</h1>
+          <p class="caption muted">For anything outside the three built-in groups — a site login, a payment PIN. Names take one of two shapes, and the first part becomes the group this key appears under.</p>
+        </header>
+        <div class="pane-body add-form">
+          <div class="float bg">
+            <label for="free-key">Key name</label>
+            <input id="free-key" class="mono" placeholder="example-shop.payment.pinnumber" autocomplete="off">
+            <div class="meta muted key-shapes">
+              <span class="mono accent">scope.field</span><span>for a single value ·</span>
+              <span class="mono accent">scope.instance.field</span><span>when several can exist</span>
+            </div>
+          </div>
+          <div class="add-row">
+            <div class="float bg type">
+              <label for="free-type">Type</label>
+              <select id="free-type">
+                <option>text</option><option>card</option><option>phone</option><option>rrn</option>
+                <option>email</option><option>name</option><option>address</option>
+              </select>
+            </div>
+            <div class="float bg grow">
+              <label for="free-value">Value</label>
+              <input id="free-value" autocomplete="off">
+            </div>
+          </div>
+          <p class="meta disabled">The type decides which forms of the value the server redacts on its way out — a card number is also caught spaced, hyphenated and part-masked.</p>
+        </div>
+      </div>
+
       <div class="savebar">
-        <button id="btn-save-all">입력한 항목 저장</button>
-        <span class="muted">값을 적은 칸만 저장·덮어쓴다. 비워둔 칸은 건드리지 않는다.</span>
-      </div>
-
-      <section class="card">
-        <h2>기타 (자유 등록)</h2>
-        <div class="free-form">
-          <label>키 이름 (범위.항목 또는 범위.인스턴스.항목)<input id="free-key" placeholder="예: example-shop.payment.pinnumber"></label>
-          <label>타입
-            <select id="free-type">
-              <option>text</option><option>card</option><option>phone</option><option>rrn</option>
-              <option>email</option><option>name</option><option>address</option>
-            </select>
-          </label>
-          <label>값<input id="free-value" type="text" autocomplete="off"></label>
-          <button id="btn-free-save">저장</button>
+        <div id="msg" class="feedback" hidden></div>
+        <div class="savebar-row">
+          <div class="float grow">
+            <label for="pass">Master password</label>
+            <input id="pass" type="password" autocomplete="off" placeholder="Confirms every write · never stored">
+          </div>
+          <span id="entered" class="caption muted"><span class="mono text">0</span> fields entered</span>
+          <button id="btn-save" class="primary">Save this group</button>
         </div>
-        <table id="extra-keys" hidden>
-          <thead><tr><th>키</th><th>타입</th><th>길이</th><th></th></tr></thead>
-          <tbody></tbody>
-        </table>
-      </section>
-
-      <p id="msg" class="msg" hidden></p>
-    </section>
-  </main>
+      </div>
+    </div>
+  </section>
   <script type="module" src="./src/main.ts"></script>
 </body>
 </html>

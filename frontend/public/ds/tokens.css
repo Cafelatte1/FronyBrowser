@@ -1,0 +1,43 @@
+/* Frony Design System tokens — copied from the Claude Design project "FronyBrowser" (2026-09-09).
+   Single source of truth; never re-declare these values inline. Dark is the default theme. */
+@font-face{font-family:'Pretendard';font-style:normal;font-weight:400;font-display:swap;src:url('fonts/Pretendard-Regular.woff2') format('woff2')}
+@font-face{font-family:'Pretendard';font-style:normal;font-weight:500;font-display:swap;src:url('fonts/Pretendard-Medium.woff2') format('woff2')}
+@font-face{font-family:'Pretendard';font-style:normal;font-weight:600;font-display:swap;src:url('fonts/Pretendard-SemiBold.woff2') format('woff2')}
+@font-face{font-family:'Pretendard';font-style:normal;font-weight:700;font-display:swap;src:url('fonts/Pretendard-Bold.woff2') format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:400;font-display:swap;src:url('fonts/JetBrainsMono-Regular.woff2') format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:500;font-display:swap;src:url('fonts/JetBrainsMono-Medium.woff2') format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:600;font-display:swap;src:url('fonts/JetBrainsMono-SemiBold.woff2') format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-style:normal;font-weight:700;font-display:swap;src:url('fonts/JetBrainsMono-Bold.woff2') format('woff2')}
+
+:root{
+--brand-1:#A18CD1;--brand-2:#FBC2EB;--brand-2-deep:#E9A8D4;
+--gradient:linear-gradient(90deg,var(--brand-1),var(--brand-2));
+--gradient-diag:linear-gradient(135deg,var(--brand-1),var(--brand-2));
+--gradient-cta:linear-gradient(90deg,var(--brand-1),var(--brand-2-deep));
+--on-gradient:#2A2530;
+--on-accent-fill:#2A2530;--on-danger-fill:#FFFFFF;
+--bg:#1B1B22;--surface:#23232B;--surface-raised:#2C2C36;
+--border:#34343F;--border-strong:#43424F;
+--text:#F2F0F7;--text-muted:#B4B4BE;--text-disabled:#8A8A94;--on-accent:#FFFFFF;
+--accent:#A18CD1;--accent-subtle:#3A3450;--accent-subtle-hover:#474066;--on-accent-subtle:#B9A6E4;
+--alt:#E091C0;--alt-subtle:#4C3446;--on-alt-subtle:#F0B4D8;
+--success:#6FBF8B;--success-subtle:#24402F;--on-success-subtle:#8FD6A6;
+--info:#7E9BE0;--info-subtle:#2E3A58;--on-info-subtle:#9DB2E8;
+--warning:#D9A05B;--warning-subtle:#453820;--on-warning-subtle:#E5B87E;
+--danger:#B0505C;--danger-subtle:#4E2F3A;--on-danger-subtle:#DE9099;
+--neutral-subtle:#383843;--on-neutral-subtle:#B4B4BE;
+--r-xs:6px;--r-sm:8px;--r-md:10px;--r-lg:12px;--r-xl:14px;--r-2xl:18px;--r-pill:999px;
+--e-0:none;
+--e-1:0 1px 2px rgba(0,0,0,.40);--e-2:0 4px 14px rgba(0,0,0,.45);
+--e-3:0 18px 44px rgba(0,0,0,.50);--e-4:0 24px 60px rgba(0,0,0,.55);
+--e-accent:0 4px 14px rgba(161,140,209,.35);
+--s-1:4px;--s-2:8px;--s-3:12px;--s-4:16px;--s-5:20px;--s-6:24px;--s-8:32px;--s-10:40px;--s-12:48px;
+--font:'Pretendard',-apple-system,'Segoe UI','Noto Sans KR',sans-serif;
+--font-mono:'JetBrains Mono',ui-monospace,'SF Mono',Consolas,Menlo,monospace;
+--dur-fast:120ms;--dur:200ms;--dur-slow:280ms;--ease:cubic-bezier(.2,0,.2,1);
+--t-display:20px;--t-title:17px;--t-subtitle:16px;--t-body:15px;--t-label:14px;
+--t-caption:13px;--t-meta:12px;--t-badge:11px;
+--lh-body:1.55;--lh-long:1.6;
+--control-h:48px;--hit-min:44px;--control-pad-x:22px;--control-pad-y:13px;
+--field-pad-x:14px;--field-pad-y:12px;--row-h:52px;--card-pad:16px;--gap:12px;--icon:20px;
+}
