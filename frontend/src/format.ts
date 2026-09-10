@@ -1,10 +1,10 @@
-/** ms → "2일 23시간" / "3시간 5분" / "12분" — 긴 unlock TTL을 분으로만 보이면 감이 안 온다 */
+/** 남은 unlock 시간 — 일·시간·분으로 줄여 보인다 */
 export function fmtRemain(ms: number): string {
-  const min = Math.ceil(ms / 60_000);
-  const d = Math.floor(min / 1440);
-  const h = Math.floor((min % 1440) / 60);
-  const m = min % 60;
-  if (d > 0) return h > 0 ? `${d}일 ${h}시간` : `${d}일`;
-  if (h > 0) return m > 0 ? `${h}시간 ${m}분` : `${h}시간`;
-  return `${m}분`;
+  const m = Math.max(0, Math.ceil(ms / 60_000));
+  const d = Math.floor(m / 1440);
+  const h = Math.floor((m % 1440) / 60);
+  const mm = m % 60;
+  if (d > 0) return h > 0 ? `${d}d ${h}h` : `${d}d`;
+  if (h > 0) return mm > 0 ? `${h}h ${mm}m` : `${h}h`;
+  return `${mm}m`;
 }

@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse as parseToml } from 'smol-toml';
 import { describe, expect, it } from 'vitest';
-import { EXTRA_KEY, SCHEMA_KEYS, SECTIONS, checkFields, type FieldDef } from '../../src/schema.js';
+import { EXTRA_KEY, SCHEMA_KEYS, SECTIONS, checkFields, groupOf, isSecretKey, type FieldDef } from '../../src/schema.js';
 import { fmtRemain } from '../../src/format.js';
 
 type PolicyDoc = {
@@ -125,16 +125,25 @@ describe('형식 검사', () => {
       { field: field('profile.email'), value: 'nope' },
       { field: field('profile.carrier'), value: 'SKT' }, // pattern 없음 — 항상 통과
     ]);
-    expect(r).toEqual(['이메일 (name@example.com)']);
+    expect(r).toEqual(['Email (name@example.com)']);
+  });
+});
+
+describe('기타 키 그룹', () => {
+  it('첫 세그먼트가 그룹, 마지막 세그먼트가 password·pin이면 마스킹', () => {
+    expect(groupOf('example-shop.login.id')).toBe('example-shop');
+    expect(isSecretKey('example-shop.login.password')).toBe(true);
+    expect(isSecretKey('example-shop.payment.pinnumber')).toBe(true);
+    expect(isSecretKey('example-shop.login.id')).toBe(false);
   });
 });
 
 describe('fmtRemain — 남은 unlock 시간 표시', () => {
   it('일·시간·분 단위로 줄여 보인다', () => {
-    expect(fmtRemain(4316 * 60_000)).toBe('2일 23시간');
-    expect(fmtRemain(2 * 1440 * 60_000)).toBe('2일');
-    expect(fmtRemain(185 * 60_000)).toBe('3시간 5분');
-    expect(fmtRemain(12 * 60_000)).toBe('12분');
-    expect(fmtRemain(0)).toBe('0분');
+    expect(fmtRemain(4316 * 60_000)).toBe('2d 23h');
+    expect(fmtRemain(2 * 1440 * 60_000)).toBe('2d');
+    expect(fmtRemain(185 * 60_000)).toBe('3h 5m');
+    expect(fmtRemain(12 * 60_000)).toBe('12m');
+    expect(fmtRemain(0)).toBe('0m');
   });
 });

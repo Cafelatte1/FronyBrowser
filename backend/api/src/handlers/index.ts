@@ -8,6 +8,8 @@
 
 export const HANDLERS = [
   'session_begin',
+  'session_list',
+  'session_status',
   'session_end',
   'snapshot',
   'fill',
@@ -15,6 +17,7 @@ export const HANDLERS = [
   'select',
   'navigate',
   'wait',
+  'page_switch',
   'vault_list',
   'vault_unlock',   // admin 전용·MCP 미노출 (8.4)
   'vault_handoff',  // admin 전용·MCP 미노출 — 배포 재시작을 넘기는 unlock 인계 (FWL-042)
