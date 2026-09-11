@@ -6,8 +6,8 @@
   Runs ON the server as the service account. Logon trigger, interactive logon type, no time limit,
   single instance, runs C:\Users\<account>\wallet-server.cmd.
 
-  ★ Interactive only (not S4U): an origin with headless = false launches a headful Chrome window
-    (policy.toml [origins].headless = false, FWL-027) and a window cannot be
+  ★ Interactive only (not S4U): a session opened with headless = false launches a headful Chrome window
+    (session_begin argument, FWL-055) and a window cannot be
     created from session 0. Consequence: after a reboot the server starts only once
     that account logs on to the laptop. Keep that session logged on (lock is fine).
   ★ Must run as the service account, not SYSTEM — DPAPI is per-account.
