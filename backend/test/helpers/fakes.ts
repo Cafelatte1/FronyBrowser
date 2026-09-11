@@ -33,7 +33,7 @@ export function fakeVault(opts: FakeVaultOptions = {}): Vault {
     locked,
     unlock: async () => {},
     lock: () => {},
-    list: () => Object.entries(entries).map(([name, e]) => ({ name, type: e.type })),
+    list: () => Object.entries(entries).map(([name, e]) => ({ name, type: e.type, grant: e.grant })),
     get: (key) => {
       if (locked) throw new VaultLockedError();
       return entries[key];

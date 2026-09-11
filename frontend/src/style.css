@@ -134,6 +134,8 @@ button:disabled { opacity: .5; cursor: default; }
 .key-shapes { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-top: 8px; }
 .add-row { display: flex; flex-wrap: wrap; gap: var(--s-4); }
 .add-row .type { flex: 0 1 150px; min-width: 120px; }
+.check { display: flex; gap: 8px; align-items: flex-start; color: var(--text-muted); }
+.check input { margin: 3px 0 0; accent-color: var(--accent); }
 
 /* ── sticky save bar ── */
 .savebar { position: sticky; bottom: 0; display: flex; flex-direction: column; background: var(--surface); border-top: 1px solid var(--border-strong); margin-top: auto; }

@@ -285,7 +285,7 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
     const caller = await requireAdmin(deps, gui, req, res);
     if (!caller) return;
     const body = (await readBody(req)) as
-      | { passphrase?: string; key?: string; type?: string; value?: string }
+      | { passphrase?: string; key?: string; type?: string; value?: string; grant?: unknown }
       | undefined;
     if (typeof body?.passphrase !== 'string') {
       json(res, 400, { ok: false, error: { code: 'bad_request', message: 'passphrase required', retriable: false } });
@@ -306,12 +306,12 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
       // entries[]가 있으면 일괄 저장 (복호화·재암호화 한 번) — GUI의 "입력한 항목 저장"
       const entries = (body as { entries?: unknown }).entries;
       if (Array.isArray(entries)) {
-        const okShape = entries.every((e) => e && typeof e === 'object' && typeof (e as { key?: unknown }).key === 'string' && typeof (e as { type?: unknown }).type === 'string' && typeof (e as { value?: unknown }).value === 'string');
+        const okShape = entries.every((e) => e && typeof e === 'object' && typeof (e as { key?: unknown }).key === 'string' && typeof (e as { type?: unknown }).type === 'string' && typeof (e as { value?: unknown }).value === 'string' && ((e as { grant?: unknown }).grant === undefined || typeof (e as { grant?: unknown }).grant === 'boolean'));
         if (!okShape) {
-          json(res, 400, { ok: false, error: { code: 'bad_request', message: 'entries: [{ key, type, value }]', retriable: false } });
+          json(res, 400, { ok: false, error: { code: 'bad_request', message: 'entries: [{ key, type, value, grant? }]', retriable: false } });
           return;
         }
-        const result = await deps.vaultAdmin.setMany(caller, body.passphrase, entries as Array<{ key: string; type: string; value: string }>);
+        const result = await deps.vaultAdmin.setMany(caller, body.passphrase, entries as Array<{ key: string; type: string; value: string; grant?: boolean }>);
         jsonScrubbed(deps, 'vault_set', res, adminStatus(result), result);
         return;
       }
@@ -319,7 +319,7 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
         json(res, 400, { ok: false, error: { code: 'bad_request', message: 'key/type/value required', retriable: false } });
         return;
       }
-      const result = await deps.vaultAdmin.set(caller, body.passphrase, body.key, body.type, body.value);
+      const result = await deps.vaultAdmin.set(caller, body.passphrase, body.key, body.type, body.value, typeof body.grant === 'boolean' ? body.grant : false);
       jsonScrubbed(deps, 'vault_set', res, adminStatus(result), result);
       return;
     }
