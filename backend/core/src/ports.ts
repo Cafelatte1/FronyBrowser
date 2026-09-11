@@ -68,14 +68,8 @@ export interface ActionTarget {
   /** 값이 제거된 스냅샷. 브랜디드 타입이 규칙 1을 강제한다. opts는 출력 범위만 줄인다 (FWL-043) */
   snapshot(sessionId: SessionId, opts?: SnapshotOptions): Promise<SafeSnapshot>;
 
-  /** expect 대조용 값 추출. 셀렉터는 policy.toml에서 오며 호출자가 정하지 않는다 */
+  /** 셀렉터로 표시 텍스트 하나를 읽는다. 핸들러에는 이 경로가 없다 — 통합 테스트의 오라클이다 */
   extract(sessionId: SessionId, selector: string): Promise<string | null>;
-
-  /**
-   * ref 요소가 셀렉터에 매치하는가 — `require_selector` 검사용. 셀렉터는 policy.toml에서 온다.
-   * 불리언만 돌려준다. 요소 값·속성을 읽어 내보내는 경로가 아니다
-   */
-  matches(sessionId: SessionId, ref: Ref, selector: string): Promise<boolean>;
 
   /** 현재 URL·페이지 수·스냅샷 세대 — 세션 이어받기용 상태 조회 */
   status(sessionId: SessionId): Promise<TargetStatus>;

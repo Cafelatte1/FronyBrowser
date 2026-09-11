@@ -10,7 +10,6 @@ import type {
   ActionTarget,
   Audit,
   FillResponse,
-  Policy,
   Result,
   SessionBeginRequest,
   SessionBeginResponse,
@@ -24,21 +23,20 @@ import type {
   VaultListResponse,
   Session,
 } from '@wallet/core';
-import { KeyNotFoundError, VaultLockedError, amountWithinExpectation, checkFill, fail, failFromUnknown, findKeys, launchProfileFor, markGrantUsed, parseAmount, resolve, verifyPayGrant, writeUnlockHandoff } from '@wallet/core';
-import type { Cipher, DryRun, Ref, SnapshotOptions, TargetKind } from '@wallet/core';
+import { KeyNotFoundError, VaultLockedError, fail, failFromUnknown, findKeys, markGrantUsed, resolve, verifyPayGrant, writeUnlockHandoff } from '@wallet/core';
+import type { BrowserProfile, Cipher, DryRun, KeypadSpec, LaunchProfile, Ref, SnapshotOptions, TargetKind } from '@wallet/core';
 import { isBrowserProfile } from '@wallet/core';
 import { TargetError } from '@wallet/app';
 
 export type HandlerDeps = {
   readonly vault: Vault;
-  readonly policy: Policy;
   readonly sessions: SessionStore;
-  /** kind별 ActionTarget (FWL-037). 세션의 kind로 고른다. 'browser'와 정책의 모든 origins.kind가 등록돼 있어야 기동한다 */
+  /** kind별 ActionTarget. 'browser'는 필수; session_begin이 요청한 kind에 타겟이 없으면 bad_request */
   readonly targets: ReadonlyMap<TargetKind, ActionTarget>;
   readonly audit: Audit;
-  /** grant 발급자와 공유하는 pay grant HMAC 키. require_grant 키가 있으면 main이 기동 시 강제한다 (규칙 13) */
+  /** grant 플래그 키가 있으면 fill이 이 키로 검증한다; 없으면 grant 키 fill은 grant_invalid(fail-closed) */
   readonly grantKey?: string | null;
-  /** 켜져 있으면 require_grant 키의 fill이 입력만 건너뛴다 (FWL-035). 없으면 꺼진 것 */
+  /** 켜져 있으면 grant 플래그 키의 fill이 입력만 건너뛴다 (FWL-035). 없으면 꺼진 것 */
   readonly dryRun?: DryRun;
   /** unlock 인계 파일 경로 (FWL-042). 없으면 vault_handoff는 거부된다 */
   readonly handoffFile?: string;
@@ -65,14 +63,11 @@ function isExactOrigin(s: string): boolean {
   }
 }
 
+const BROWSER_PROFILES: ReadonlyArray<BrowserProfile> = ['chromium', 'chrome'];
+
 export function createHandlers(deps: HandlerDeps) {
-  const { vault, policy, sessions, targets, audit } = deps;
-  // fail-closed: 정책이 가리키는 kind에 타겟이 없으면 기동 거부 — session_begin에서 뒤늦게 터지지 않게 (FWL-037)
-  const requiredKinds = new Set<TargetKind>(['browser']);
-  for (const o of policy.origins.values()) requiredKinds.add(o.kind);
-  for (const kind of requiredKinds) {
-    if (!targets.has(kind)) throw new Error(`no ActionTarget registered for kind "${kind}"`);
-  }
+  const { vault, sessions, targets, audit } = deps;
+  if (!targets.has('browser')) throw new Error('no ActionTarget registered for kind "browser"');
   function targetOf(s: { readonly kind: TargetKind }): ActionTarget {
     const t = targets.get(s.kind);
     if (!t) throw new Error(`no ActionTarget registered for kind "${s.kind}"`); // 기동 검사로 막혀 있다
@@ -115,7 +110,13 @@ export function createHandlers(deps: HandlerDeps) {
       if (typeof req.origin !== 'string' || !isExactOrigin(req.origin)) {
         return fail('bad_request', 'origin must be an exact http(s) origin');
       }
-      const profile = launchProfileFor(policy, req.origin); // 서버 정책이 고른다 — 호출자가 정하지 않는다 (규칙 7)
+      const kind = req.kind ?? 'browser';
+      if (!targets.has(kind)) return fail('bad_request', `unknown target kind "${kind}"`);
+      if (req.browser !== undefined && !BROWSER_PROFILES.includes(req.browser)) return fail('bad_request', 'browser must be "chromium" or "chrome"');
+      // 호출자가 고른다 — 사이트별 조합은 플레이북 지식이다 (FWL-055). chrome/headful을 못 띄우면 browser_unavailable로 그대로 실패한다
+      const profile: LaunchProfile = kind === 'browser'
+        ? { kind, browser: req.browser ?? 'chromium', headless: req.headless ?? true }
+        : { kind };
       const begun = sessions.begin(caller.client, req, profile);
       if (!begun.ok) {
         return begun.code === 'lease_conflict'
@@ -142,7 +143,6 @@ export function createHandlers(deps: HandlerDeps) {
         origin: req.origin,
         kind: profile.kind,
         profile,
-        expect: req.expect ?? null,
         onApproval: req.onApproval ?? null,
       });
       // 실제 로그인 여부는 에이전트가 스냅샷으로 판단한다 (FWL-046) — 서버는 저장 컨텍스트를 주입했는지만 안다
@@ -283,7 +283,7 @@ export function createHandlers(deps: HandlerDeps) {
       }
     },
 
-    async fill(caller: Caller, id: SessionId, ref: Ref, value: string, grant?: string): Promise<Result<FillResponse>> {
+    async fill(caller: Caller, id: SessionId, ref: Ref, value: string, grant?: string, keypad?: KeypadSpec): Promise<Result<FillResponse>> {
       const found = session(caller, id);
       if (!found.ok) return found;
       const target = targetOf(found.session);
@@ -312,37 +312,44 @@ export function createHandlers(deps: HandlerDeps) {
         return failed(e, null); // origin을 못 읽은 실패다 — 프레임 origin이 없다
       }
 
-      // ★ 정책 검사는 대상 요소가 속한 프레임의 origin 기준이다 (규칙 4)
-      let grantNeededFor: string | null = null;
-      for (const key of keys) {
-        const check = checkFill(policy, key, frameOrigin);
-        if (!check.allowed) {
+      let resolved;
+      try {
+        resolved = resolve(value, vault);
+      } catch (e) {
+        if (e instanceof KeyNotFoundError) {
+          // 금고에 없는 키 — 탐색 가치가 없는 자기 설정 문제
           audit.append({
             evt: 'policy_denied',
             ...baseAudit(found.session, caller),
             origin: frameOrigin,
-            key,
-            rule: check.rule,
+            key: e.key,
+            rule: 'vault_missing',
           });
-          // unknown_key도 같은 응답 — 키 존재를 탐색당하지 않는다 (8.3)
-          return fail('origin_not_permitted', 'not permitted');
+          return fail('key_not_found', 'not in vault');
         }
-        // require_selector — 페이지가 엉뚱한 필드로 유도하는 인젝션에 대한 2차 방어. 셀렉터는 정책에서 온다
-        if (check.policy.requireSelector !== undefined) {
-          let matched: boolean;
-          try {
-            matched = await target.matches(id, ref, check.policy.requireSelector);
-          } catch (e) {
-            return failed(e, frameOrigin);
-          }
-          if (!matched) {
-            audit.append({ evt: 'policy_denied', ...baseAudit(found.session, caller), origin: frameOrigin, key, rule: 'selector' });
-            return fail('selector_mismatch', 'target element does not match required selector');
-          }
-        }
-        // 되돌릴 수 없는 행위의 열쇠 — grant 발급자가 발급한 grant가 있어야 채운다 (규칙 13)
-        if (check.policy.requireGrant && grantNeededFor === null) grantNeededFor = key;
+        return failed(e, frameOrigin);
       }
+
+      // 보안 키패드 — 값을 채우는 게 아니라 서버가 숫자 버튼을 누른다. 셀렉터는 호출자가 넘긴다 (FWL-033/038, FWL-055)
+      if (keypad !== undefined) {
+        // 키패드는 한 번에 한 값만 누른다 — 여러 키를 이어붙인 값은 자릿수 대응이 없다
+        if (keys.length !== 1) return fail('bad_request', 'keypad fill takes exactly one vault key');
+        if (!/^[0-9]+$/.test(resolved.value)) {
+          // 값은 절대 남기지 않는다 — 어느 키가 규약을 어겼는지만 (규칙 5)
+          audit.append({
+            evt: 'policy_denied',
+            ...baseAudit(found.session, caller),
+            origin: frameOrigin,
+            key: keys[0] ?? null,
+            rule: 'keypad_digits_only',
+          });
+          return fail('bad_request', 'keypad value must be digits');
+        }
+      }
+
+      // 볼트에서 grant 플래그가 켜진 키 — grant 발급자의 grant가 있어야 채운다 (규칙 13).
+      // resolve가 통과했으니 금고는 열려 있고 키도 전부 있다
+      const grantNeededFor = keys.find((k) => vault.get(k)?.grant === true) ?? null;
 
       // grant는 fill 1회당 한 번만 검증한다 — 1회용이라 키마다 검증하면 두 번째 키에서 reused가 된다
       if (grantNeededFor !== null) {
@@ -359,7 +366,7 @@ export function createHandlers(deps: HandlerDeps) {
           denied('missing');
           return fail('grant_required', 'this key requires a pay grant');
         }
-        // 정책에 require_grant가 있는데 키가 없는 상태는 main이 기동 거부로 막는다 — 여기까지 오면 fail-closed
+        // grant 키가 없으면 검증할 수 없다 — fail-closed
         if (!deps.grantKey) {
           denied('no_grant_key');
           return fail('grant_invalid', 'pay grant rejected');
@@ -376,58 +383,18 @@ export function createHandlers(deps: HandlerDeps) {
         }
       }
 
-      let resolved;
-      try {
-        resolved = resolve(value, vault);
-      } catch (e) {
-        if (e instanceof KeyNotFoundError) {
-          // policy에는 있으나 금고에 값이 없는 운영 불일치 — 탐색 가치가 없는 자기 설정 문제
-          audit.append({
-            evt: 'policy_denied',
-            ...baseAudit(found.session, caller),
-            origin: frameOrigin,
-            key: e.key,
-            rule: 'vault_missing',
-          });
-          return fail('key_not_found', 'not in vault');
-        }
-        return failed(e, frameOrigin);
-      }
-
-      // 보안 키패드 키는 값을 채우는 게 아니라 서버가 숫자 버튼을 누른다 (FWL-033)
-      // 어느 키든 keypad 모드면 keypad 경로다 — 두 번째 키에 숨겨 text fill로 흘리는 조합을 막는다
-      const keypadKey = keys.find((k) => policy.keys.get(k)?.inputMode === 'keypad');
-      const keypadPolicy = keypadKey !== undefined ? policy.keys.get(keypadKey) : undefined;
-      const keypadSelector = keypadPolicy?.keypadDigitSelector ?? null;
-      const keypadSprite = keypadPolicy?.keypadSprite ?? null;
-      if (keypadPolicy !== undefined) {
-        // 키패드는 한 번에 한 값만 누른다 — 여러 키를 이어붙인 값은 자릿수 대응이 없다
-        if (keys.length !== 1) return fail('bad_request', 'keypad fill takes exactly one vault key');
-        if (!/^[0-9]+$/.test(resolved.value)) {
-          // 값은 절대 남기지 않는다 — 어느 키가 규약을 어겼는지만 (규칙 5)
-          audit.append({
-            evt: 'policy_denied',
-            ...baseAudit(found.session, caller),
-            origin: frameOrigin,
-            key: keys[0] ?? null,
-            rule: 'keypad_digits_only',
-          });
-          return fail('bad_request', 'keypad value must be digits');
-        }
-      }
-
-      // dry-run: grant 키는 여기까지(세션·origin·셀렉터·grant·키패드 규칙) 전부 통과한 뒤 입력만 건너뛴다 (FWL-035).
+      // dry-run: grant 키는 여기까지(세션·grant·키패드 규칙) 전부 통과한 뒤 입력만 건너뛴다 (FWL-035).
       // 응답은 실제 fill과 같아야 한다 — 주행 중인 에이전트가 dry-run임을 알 수 없어야 한다
       const dry = grantNeededFor !== null && (deps.dryRun?.get() ?? false);
       if (!dry) {
         try {
           const r = await target.act(
             id,
-            keypadSprite !== null
-              ? { kind: 'keypad_sprite', ref, ...keypadSprite, value: resolved.value }
-              : keypadSelector !== null
-                ? { kind: 'keypad', ref, digitSelector: keypadSelector, value: resolved.value }
-                : { kind: 'fill', ref, value: resolved.value },
+            keypad === undefined
+              ? { kind: 'fill', ref, value: resolved.value }
+              : 'digitSelector' in keypad
+                ? { kind: 'keypad', ref, digitSelector: keypad.digitSelector, value: resolved.value }
+                : { kind: 'keypad_sprite', ref, keySelector: keypad.keySelector, cellSelector: keypad.cellSelector, resolver: keypad.resolver, value: resolved.value },
           );
           filledRole = r.role ?? null;
         } catch (e) {
@@ -446,8 +413,8 @@ export function createHandlers(deps: HandlerDeps) {
         len: resolved.value.length,
         ref: String(ref),
         role: filledRole,
-        mode: keypadPolicy !== undefined ? 'keypad' : 'text',
-        ...(keypadSprite !== null ? { resolver: keypadSprite.resolver } : {}),
+        mode: keypad !== undefined ? 'keypad' : 'text',
+        ...(keypad !== undefined && !('digitSelector' in keypad) ? { resolver: keypad.resolver } : {}),
         ...(grantNeededFor !== null ? { grant: true } : {}),
         ...(dry ? { dry: true } : {}), // dry-run은 감사로그에만 드러난다 — 응답에는 절대 싣지 않는다
       });
@@ -459,37 +426,12 @@ export function createHandlers(deps: HandlerDeps) {
       if (!found.ok) return found;
       const target = targetOf(found.session);
 
-      // v1에서도 expect가 선언돼 있으면 클릭 전에 금액을 대조한다 —
-      // 계약은 v1부터 최종형이다 (14절). 추출 셀렉터는 policy.toml에서 온다.
-      const expect = found.session.request.expect;
+      // origin은 감사 기록용이다 — 클릭 자체에 값 규칙은 없다
       let origin: string | null = null;
       try {
         origin = await target.originOf(id, ref);
       } catch {
         // 요소 origin을 못 읽으면 아래 act에서 같은 이유로 실패한다
-      }
-      if (expect?.maxAmount !== undefined && origin !== null) {
-        // 셀렉터는 세션의 타겟 origin 정책에서 온다 — 버튼이 PG iframe 안에 있어도 금액은 이 구매 흐름의 것이다
-        const selector = deps.policy.origins.get(found.session.origin)?.amountSelector;
-        if (selector) {
-          const text = await target.extract(id, selector);
-          const observed = text === null ? null : parseAmount(text);
-          if (observed === null) {
-            if (policy.approval.amountFallback === 'deny') {
-              audit.append({ evt: 'expect_mismatch', ...baseAudit(found.session, caller), origin, observed: null });
-              return fail('amount_unavailable', 'amount not extractable');
-            }
-          } else if (!amountWithinExpectation(observed, expect.maxAmount, policy.approval.amountTolerance)) {
-            audit.append({
-              evt: 'expect_mismatch',
-              ...baseAudit(found.session, caller),
-              origin,
-              expected: expect.maxAmount,
-              observed,
-            });
-            return fail('amount_mismatch', 'observed amount exceeds declared expectation');
-          }
-        }
       }
 
       try {

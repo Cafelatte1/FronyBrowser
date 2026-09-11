@@ -4,8 +4,9 @@
  * 완전한 메모리 소거는 불가능하다 (Node 문자열은 immutable). 대응은
  * zeroize가 아니라 짧은 TTL + 자동 lock이다 (11절).
  *
- * 파일 스키마 (9.2): 단일 DPAPI 블롭. 복호화하면 key → {type, value} 맵이다 —
+ * 파일 스키마 (9.2): 단일 DPAPI 블롭. 복호화하면 key → {type, value, grant} 맵이다 —
  * 타입까지 담아 policy 없이 자기완결로 동작한다 (CLI가 policy를 몰라도 됨).
+ * grant=true는 pay grant가 있어야만 입력되는 키를 뜻한다.
  * entropy = SHA-256(passphrase) — 계정 탈취만으로도, 패스프레이즈만으로도 못 연다.
  */
 
@@ -15,7 +16,7 @@ import { dirname, join } from 'node:path';
 import * as dpapi from './dpapi.js';
 import type { ValueType } from './variants.js';
 
-export type VaultEntry = { readonly type: ValueType; readonly value: string };
+export type VaultEntry = { readonly type: ValueType; readonly value: string; readonly grant: boolean };
 
 /** 테스트에서 DPAPI를 대체하기 위한 주입점 */
 export type Cipher = {
@@ -35,7 +36,7 @@ export interface Vault {
   unlock(passphrase: string, opts?: { readonly until?: number }): Promise<void>;
   lock(): void;
   /** 키 이름과 타입만. 값은 나가지 않는다 */
-  list(): ReadonlyArray<{ name: string; type: ValueType }>;
+  list(): ReadonlyArray<{ name: string; type: ValueType; grant: boolean }>;
   get(key: string): VaultEntry | undefined;
   /** 스크러버가 매칭에 쓸 현재 살아 있는 값들 */
   live(): ReadonlyMap<string, VaultEntry>;
@@ -63,11 +64,19 @@ function decode(json: string): Map<string, VaultEntry> {
   }
   const out = new Map<string, VaultEntry>();
   for (const [key, entry] of Object.entries(raw)) {
-    const e = entry as { type?: unknown; value?: unknown };
+    const e = entry as { type?: unknown; value?: unknown; grant?: unknown };
     if (typeof e?.value !== 'string' || typeof e?.type !== 'string' || !VALUE_TYPES.has(e.type)) {
       throw new Error(`vault file: malformed entry for key "${key}"`);
     }
-    out.set(key, { type: e.type as ValueType, value: e.value });
+    // grant가 없는 예전 파일은 false로 읽는다 — 있으면 boolean이어야 한다
+    if (e.grant !== undefined && typeof e.grant !== 'boolean') {
+      throw new Error(`vault file: malformed entry for key "${key}"`);
+    }
+    out.set(key, {
+      type: e.type as ValueType,
+      value: e.value,
+      grant: typeof e.grant === 'boolean' ? e.grant : false,
+    });
   }
   return out;
 }
@@ -142,12 +151,13 @@ export function overviewVaultFile(
   path: string,
   passphrase: string,
   cipher: Cipher = dpapi,
-): Array<{ name: string; type: ValueType; len: number }> {
+): Array<{ name: string; type: ValueType; len: number; grant: boolean }> {
   if (!existsSync(path)) return [];
   return [...readVaultFile(path, passphrase, cipher)].map(([name, e]) => ({
     name,
     type: e.type,
     len: e.value.length,
+    grant: e.grant,
   }));
 }
 
@@ -209,7 +219,7 @@ export function createVault(path: string, opts: VaultOptions = {}): Vault {
       return this.locked ? 0 : unlockedUntil - now();
     },
     list() {
-      return [...ensureUnlocked()].map(([name, e]) => ({ name, type: e.type }));
+      return [...ensureUnlocked()].map(([name, e]) => ({ name, type: e.type, grant: e.grant }));
     },
     get(key: string) {
       return ensureUnlocked().get(key);

@@ -14,6 +14,6 @@ set FRONY_AUTH_URL=http://<fronyauth host>:8640/introspect
 set FRONY_AUTH_ISSUER=https://<fronyauth public host>
 set WALLET_PUBLIC_URL=https://<tailnet host>.ts.net/wallet
 set WALLET_DATA_DIR=C:\Users\<account>\AppData\Local\Frony\FronyBrowser\data
-rem Required only when the policy has a require_grant key. Same value as FronyShopping's launcher.
+rem Needed to fill keys registered with the grant flag; without it those fills fail with grant_invalid. Same value as FronyShopping's launcher.
 set FRONY_GRANT_KEY=<shared secret with FronyShopping>
 npx tsx backend\api\src\main.ts >> C:\Users\<account>\AppData\Local\Frony\FronyBrowser\logs\server.log 2>&1

@@ -190,7 +190,6 @@ export function createPlaywrightTarget(pool: BrowserPool, opts: PlaywrightTarget
 
     async extract(sessionId, selector) {
       const s = state(sessionId);
-      // 셀렉터는 policy.toml에서 온다 — 호출자 입력이 아니다.
       // 모든 프레임을 훑어 처음 매치되는 요소의 표시 텍스트를 돌려준다.
       for (const frame of s.page.frames()) {
         try {
@@ -203,16 +202,6 @@ export function createPlaywrightTarget(pool: BrowserPool, opts: PlaywrightTarget
         }
       }
       return null;
-    },
-
-    async matches(sessionId, ref, selector) {
-      const s = state(sessionId);
-      const handle = handleOf(s, ref);
-      // 페이지 안에서 matches()만 부른다 — 값·속성을 읽어 오지 않는다 (규칙 2)
-      return guarded(
-        () => handle.evaluate((el, sel) => (el as unknown as { matches(s: string): boolean }).matches(sel), selector),
-        'ref_not_found',
-      );
     },
 
     async status(sessionId) {

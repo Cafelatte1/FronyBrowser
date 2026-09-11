@@ -5,7 +5,7 @@
 
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
-import { createMemoryAudit, createSessionStore, parsePolicy } from '@wallet/core';
+import { createMemoryAudit, createSessionStore } from '@wallet/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -18,7 +18,7 @@ import { connectMcp } from '../helpers/mcp-client.js';
 
 const SECRET_PHONE = '01012345678';
 
-const vault = fakeVault({ entries: { phone: { type: 'phone', value: SECRET_PHONE } } });
+const vault = fakeVault({ entries: { phone: { type: 'phone', value: SECRET_PHONE, grant: false } } });
 
 /** 페이지가 입력값을 본문에 되비추는 최악 케이스 — egress가 가려야 한다 */
 const { target } = fakeTarget({
@@ -39,7 +39,6 @@ let baseUrl: string;
 beforeAll(async () => {
   const handlers = createHandlers({
     vault,
-    policy: parsePolicy('[keys."phone"]\ntype="phone"\nallow_origins=["https://shop.com"]\n'),
     sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 4 }),
     targets: new Map([['browser', target]]),
     audit,
@@ -85,11 +84,9 @@ describe('MCP 입구', () => {
     // 소비자가 이름으로 의존하는 계약 (2026-09-06 frozen)
     const byName = new Map(tools.map((t) => [t.name, t]));
     const props = (n: string) => Object.keys((byName.get(n)?.inputSchema as { properties?: object }).properties ?? {});
-    expect(props('session_begin')).toEqual(expect.arrayContaining(['origin', 'traceId', 'expect']));
-    expect(JSON.stringify(byName.get('session_begin')?.inputSchema)).toContain('maxAmount');
-    expect(JSON.stringify(byName.get('session_begin')?.inputSchema)).not.toContain('merchant');
+    expect(props('session_begin')).toEqual(expect.arrayContaining(['origin', 'traceId', 'kind', 'browser', 'headless']));
     expect(props('session_end')).toContain('loggedIn');
-    expect(props('fill')).toEqual(expect.arrayContaining(['ref', 'value', 'grant']));
+    expect(props('fill')).toEqual(expect.arrayContaining(['ref', 'value', 'grant', 'keypad']));
     await s.close();
   });
 

@@ -9,7 +9,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { consumeUnlockHandoff, createMemoryAudit, createMemoryDryRun, createSessionStore, createVault, parsePolicy } from '@wallet/core';
+import { consumeUnlockHandoff, createMemoryAudit, createMemoryDryRun, createSessionStore, createVault } from '@wallet/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { fakeCipher, fakeTarget } from '../helpers/fakes.js';
 import type { AdminVerifier } from '@wallet/api';
@@ -50,7 +50,6 @@ beforeAll(async () => {
 
   const handlers = createHandlers({
     vault,
-    policy: parsePolicy(''),
     sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }),
     targets: new Map([['browser', target]]),
     audit,
@@ -112,7 +111,7 @@ describe('Funnel 커넥터 (FWL-040)', () => {
 
   it('publicUrl 있음: 401에 resource_metadata(.well-known은 호스트 바로 뒤 + 접두), 메타데이터는 resource/issuer', async () => {
     const pub = createHttpServer({
-      handlers: createHandlers({ vault, policy: parsePolicy(''), sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }), targets: new Map([['browser', target]]), audit }),
+      handlers: createHandlers({ vault, sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }), targets: new Map([['browser', target]]), audit }),
       vault, audit, verify, adminClients: [],
       vaultAdmin: createVaultAdmin({ vaultFile, vault, audit, cipher: fakeCipher }),
       vaultFile, verifyAdmin, staticDir,
@@ -184,11 +183,11 @@ describe('/vault/* 인증', () => {
     expect(before).toMatchObject({ vaultExists: false, vaultLocked: true, vaultTtlMs: 0, local: false });
     const set = await post('/vault/set', { passphrase: 'pp', key: 'phone', type: 'phone', value: '01012345678' }, token);
     expect(set.status).toBe(200);
-    expect(set.body).toMatchObject({ ok: true, key: 'phone', len: 11 });
+    expect(set.body).toMatchObject({ ok: true, key: 'phone', len: 11, grant: false });
     expect(JSON.stringify(set.body)).not.toContain('01012345678');
 
     const list = await post('/vault/list', { passphrase: 'pp' }, token);
-    expect(list.body['keys']).toContainEqual({ name: 'phone', type: 'phone', len: 11 });
+    expect(list.body['keys']).toContainEqual({ name: 'phone', type: 'phone', len: 11, grant: false });
     expect(JSON.stringify(list.body)).not.toContain('01012345678');
 
     const setLog = audit.records.find((r) => r.evt === 'vault_set');
@@ -241,11 +240,22 @@ describe('/vault/* 인증', () => {
     const token = await login();
     const r = await post('/vault/set', { passphrase: 'pp', entries: [{ key: 'b.one', type: 'text', value: 'v1' }, { key: 'b.two', type: 'text', value: 'value2' }] }, token);
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ ok: true, keys: [{ key: 'b.one', type: 'text', len: 2 }, { key: 'b.two', type: 'text', len: 6 }] });
+    expect(r.body).toMatchObject({ ok: true, keys: [{ key: 'b.one', type: 'text', len: 2, grant: false }, { key: 'b.two', type: 'text', len: 6, grant: false }] });
     expect(JSON.stringify(r.body)).not.toContain('value2');
     expect(audit.records.filter((x) => x.evt === 'vault_set' && (x.key === 'b.one' || x.key === 'b.two') && x.ok === true)).toHaveLength(2);
     const list = await post('/vault/list', { passphrase: 'pp' }, token);
-    expect(list.body['keys']).toContainEqual({ name: 'b.two', type: 'text', len: 6 });
+    expect(list.body['keys']).toContainEqual({ name: 'b.two', type: 'text', len: 6, grant: false });
+  });
+
+  it('grant 플래그 — 저장한 대로 목록에 실리고, boolean이 아니면 400', async () => {
+    const token = await login();
+    const set = await post('/vault/set', { passphrase: 'pp', key: 'g.pin', type: 'text', value: '1234', grant: true }, token);
+    expect(set.status).toBe(200);
+    expect(set.body).toMatchObject({ ok: true, key: 'g.pin', grant: true });
+    const list = await post('/vault/list', { passphrase: 'pp' }, token);
+    expect(list.body['keys']).toContainEqual({ name: 'g.pin', type: 'text', len: 4, grant: true });
+    const bad = await post('/vault/set', { passphrase: 'pp', entries: [{ key: 'g.bad', type: 'text', value: 'v', grant: 'yes' }] }, token);
+    expect(bad.status).toBe(400);
   });
 
   it('rm — 있으면 200, 없으면 404', async () => {
@@ -333,7 +343,7 @@ describe('로컬 모드 (FWL-053)', () => {
   beforeAll(async () => {
     local = createHttpServer({
       handlers: createHandlers({
-        vault, policy: parsePolicy(''),
+        vault,
         sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }),
         targets: new Map([['browser', target]]), audit,
       }),

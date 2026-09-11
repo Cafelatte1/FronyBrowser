@@ -12,7 +12,7 @@ import { SECTIONS } from '../../src/schema.js';
 type Call = { path: string; body: Record<string, unknown> };
 const calls: Call[] = [];
 /** 서버 상태 흉내 — 등록된 키 목록 */
-const registered = new Map<string, { name: string; type: string; len: number }>();
+const registered = new Map<string, { name: string; type: string; len: number; grant: boolean }>();
 let unlockedMs = 0;
 let dryRunOn = false;
 
@@ -35,10 +35,10 @@ const fakeFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit
   }
   if (path === '/vault/set') {
     const items = Array.isArray(body['entries'])
-      ? (body['entries'] as Array<{ key: string; type: string; value: string }>)
-      : [{ key: String(body['key']), type: String(body['type']), value: String(body['value']) }];
-    for (const { key, type, value } of items) registered.set(key, { name: key, type, len: value.length });
-    return jsonRes(200, { ok: true, keys: items.map(({ key, type, value }) => ({ key, type, len: value.length })) });
+      ? (body['entries'] as Array<{ key: string; type: string; value: string; grant?: boolean }>)
+      : [{ key: String(body['key']), type: String(body['type']), value: String(body['value']), grant: body['grant'] === true }];
+    for (const { key, type, value, grant } of items) registered.set(key, { name: key, type, len: value.length, grant: grant === true });
+    return jsonRes(200, { ok: true, keys: items.map(({ key, type, value, grant }) => ({ key, type, len: value.length, grant: grant === true })) });
   }
   if (path === '/vault/rm') {
     registered.delete(String(body['key']));
@@ -140,9 +140,10 @@ describe('로그인 → 저장 → 현황 → 삭제', () => {
     for (let i = 0; i < 6; i++) await tick();
     const sets = calls.filter((c) => c.path === '/vault/set');
     expect(sets).toHaveLength(1); // 한 요청 — 서버 복호화·재암호화 한 번
-    const entries = sets[0]?.body['entries'] as Array<{ key: string; value: string }>;
+    const entries = sets[0]?.body['entries'] as Array<{ key: string; value: string; grant: boolean }>;
     expect(entries.map((e) => e.key).sort()).toEqual(['profile.email', 'profile.phone']);
     expect(entries.find((e) => e.key === 'profile.email')?.value).toBe('a@b.co');
+    expect(entries.every((e) => e.grant === false)).toBe(true); // grant 키가 아닌 항목은 false로 나간다
     expect(sets[0]?.body['passphrase']).toBe('pp');
     // 저장 후 현황을 다시 그렸다
     expect(document.querySelector('[data-key="profile.email"] .badge')?.textContent).toBe('Registered · 6');
@@ -163,8 +164,12 @@ describe('로그인 → 저장 → 현황 → 삭제', () => {
 
     $<HTMLInputElement>('free-key').value = 'example-shop.payment.pinnumber';
     $<HTMLInputElement>('free-value').value = '123456';
+    $<HTMLInputElement>('free-grant').checked = true;
+    calls.length = 0;
     $('btn-save').click();
     for (let i = 0; i < 6; i++) await tick();
+    expect(calls.find((c) => c.path === '/vault/set')?.body['grant']).toBe(true);
+    expect($<HTMLInputElement>('free-grant').checked).toBe(false); // 저장 뒤 체크는 풀린다
     expect(registered.has('example-shop.payment.pinnumber')).toBe(true);
     expect(nav('example-shop')).not.toBeNull();
     expect(visiblePane()).toBe('example-shop'); // 저장한 키의 그룹으로 이동

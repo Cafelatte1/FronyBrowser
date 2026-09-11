@@ -1,28 +1,16 @@
 /**
  * 소비자(에이전트·미래 프로그램 소비자)가 의존하는 요청/응답 스키마.
  *
- * v1에서 동작하지 않는 필드(`expect`, `onApproval`)도 여기 들어 있다.
+ * v1에서 동작하지 않는 필드(`onApproval`)도 여기 들어 있다.
  * 나중에 추가하면 모든 소비자가 깨지므로, 계약은 처음부터 최종형이다.
  */
 
+import type { KeypadResolver } from './keypad-sprite.js';
 import type { ApprovalToken, BrowserProfile, PageInfo, Ref, SessionId, TargetKind, SnapshotOptions } from './types.js';
 
 // ─────────────────────────────────────────────────────────────
 // 세션
 // ─────────────────────────────────────────────────────────────
-
-/**
- * 호출자가 선언하는 기대값. wallet이 페이지에서 관측한 것과 대조한다 (2.2).
- *
- * "무엇을 살지"는 대화 속 사용자/에이전트가 판단하고, wallet은 "페이지가 그
- * 선언과 일치하는가"만 본다. 어느 쪽도 혼자서는 행동 위험을 못 막는다.
- *
- * v2부터 실제로 대조한다. v1은 받아서 감사 로그에만 남긴다.
- */
-export type Expect = {
-  /** 상한. 정확값이 아니다 — 쿠폰이 더 먹어 싸지는 건 통과시킨다 (9.4). merchant 필드는 읽는 곳이 없어 제거했다 (2026-09-06, FWL-039) */
-  readonly maxAmount?: number;
-};
 
 export type SessionBeginRequest = {
   /**
@@ -31,7 +19,11 @@ export type SessionBeginRequest = {
    * navigate는 이 origin 안에서만 허용된다. 페이지가 스스로 옮기는 리디렉트(PG·소셜 로그인·카드사)는 예외다.
    */
   readonly origin: string;
-  readonly expect?: Expect;
+  /** 타겟 종류. 기본 'browser'. 등록되지 않은 kind는 bad_request (FWL-037) */
+  readonly kind?: TargetKind;
+  /** 브라우저 타겟의 프로필. 기본 chromium · headless. 사이트마다 어느 조합이 통하는지는 호출자(플레이북)가 안다 (2026-09-12 decided, FWL-055) */
+  readonly browser?: BrowserProfile;
+  readonly headless?: boolean;
   /** 호출자의 불투명 문자열. PII 금지. 감사 로그에 그대로 기록된다 */
   readonly traceId?: string;
   /**
@@ -92,9 +84,18 @@ export type FillRequest = {
   readonly ref: Ref;
   /** `{{vault:key}}` 플레이스홀더를 포함할 수 있다. 실제 값은 서버에서만 치환된다 */
   readonly value: string;
-  /** 신뢰하는 grant 발급자(호출 서비스)가 발급한 pay grant. require_grant 키에만 필요. 불투명 문자열 */
+  /** 신뢰하는 grant 발급자(호출 서비스)가 발급한 pay grant. 볼트에서 grant 플래그가 켜진 키에만 필요. 불투명 문자열 */
   readonly grant?: string;
+  /**
+   * 보안 키패드 (FWL-033/038). 값을 타이핑하는 대신 서버가 자릿수마다 버튼을 누른다.
+   * 셀렉터는 사이트 지식이라 호출자가 넘긴다 (FWL-055). 값은 한 개의 vault 키여야 하고 숫자만 허용된다
+   */
+  readonly keypad?: KeypadSpec;
 };
+
+export type KeypadSpec =
+  | { readonly digitSelector: string }
+  | { readonly keySelector: string; readonly cellSelector: string; readonly resolver: KeypadResolver };
 
 /** 값은 절대 반환하지 않는다. 키 이름과 길이뿐이다 */
 export type FillResponse = {

@@ -154,15 +154,6 @@ describe('originOf — 규칙 4', () => {
   }, 30_000);
 });
 
-describe('matches — require_selector', () => {
-  it('정책 셀렉터와 대조한 불리언만 돌려준다', async () => {
-    const snap = await target.snapshot(sid);
-    const cardRef = refOf(snap.tree, 'textbox', '카드번호');
-    expect(await target.matches(sid, cardRef, "input[autocomplete='cc-number']")).toBe(true);
-    expect(await target.matches(sid, cardRef, 'textarea')).toBe(false);
-  }, 30_000);
-});
-
 describe('ref 세대 — 8.1', () => {
   it('새 스냅샷 후 옛 ref는 stale_ref로 실패한다', async () => {
     const snap = await target.snapshot(sid);
@@ -189,12 +180,12 @@ describe('status — 세션 상태 조회 (FWL-008)', () => {
   }, 30_000);
 });
 
-describe('extract — 금액 추출', () => {
-  it('policy 셀렉터로 표시 텍스트를 읽는다', async () => {
+describe('extract — 표시 텍스트 읽기', () => {
+  it('셀렉터로 표시 텍스트를 읽는다', async () => {
     expect(await target.extract(sid, '.order-total .price')).toBe('총 결제금액 15,000원');
   }, 30_000);
 
-  it('없는 셀렉터는 null — amount_fallback으로 넘어간다', async () => {
+  it('없는 셀렉터는 null', async () => {
     expect(await target.extract(sid, '.does-not-exist')).toBeNull();
   }, 30_000);
 });

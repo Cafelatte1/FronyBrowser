@@ -1,7 +1,7 @@
 /**
  * 금고 등록·삭제·목록·unlock.
  *
- *   wallet set <key> --type <card|phone|rrn|email|name|address|text>
+ *   wallet set <key> --type <card|phone|rrn|email|name|address|text> [--grant]
  *   wallet rm <key>
  *   wallet list
  *   wallet unlock              — 서버의 /vault/unlock 호출 (admin 기기에서만)
@@ -29,7 +29,7 @@ function vaultPath(): string {
 
 function usage(): never {
   console.error(
-    'usage: wallet set <key> --type <t> | wallet rm <key> | wallet list | wallet unlock | wallet status',
+    'usage: wallet set <key> --type <t> [--grant] | wallet rm <key> | wallet list | wallet unlock | wallet status',
   );
   console.error(`  types: ${TYPES.join(' ')}`);
   process.exit(2);
@@ -65,6 +65,7 @@ async function main(): Promise<void> {
     const typeIdx = rest.indexOf('--type');
     const type = typeIdx >= 0 ? rest[typeIdx + 1] : undefined;
     if (!type || !(TYPES as readonly string[]).includes(type)) usage();
+    const grant = rest.includes('--grant');
 
     const passphrase = await promptHidden('마스터 비밀번호: ');
     const value = await promptHidden(`value for ${key}: `);
@@ -73,9 +74,9 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     const entries = await openOrInit(path, passphrase);
-    entries.set(key, { type: type as ValueType, value });
+    entries.set(key, { type: type as ValueType, value, grant });
     writeVaultFile(path, passphrase, entries);
-    console.log(`ok: ${key} (${type}) 저장됨 — 값 길이 ${value.length}`);
+    console.log(`ok: ${key} (${type}${grant ? ', grant' : ''}) 저장됨 — 값 길이 ${value.length}`);
     return;
   }
 
@@ -99,7 +100,7 @@ async function main(): Promise<void> {
       console.log('(비어 있음)');
       return;
     }
-    for (const [name, e] of entries) console.log(`${name}\t${e.type}\tlen=${e.value.length}`);
+    for (const [name, e] of entries) console.log(`${name}\t${e.type}${e.grant ? ' grant' : ''}\tlen=${e.value.length}`);
     return;
   }
 
@@ -138,7 +139,7 @@ async function main(): Promise<void> {
   if (cmd === 'status') {
     // dry-run은 /health에 없다(에이전트가 읽는 경로). 서버 머신에서 데이터 디렉터리의 파일을 직접 읽는다 (FWL-035)
     if (readDryRunFlag(join(defaultDataDir(), 'dry-run.json'))) {
-      console.warn('★ DRY RUN 켜짐 — require_grant 키는 입력하지 않는다. 실주행 전에 관리 UI에서 끈다');
+      console.warn('★ DRY RUN 켜짐 — grant 키는 입력하지 않는다. 실주행 전에 관리 UI에서 끈다');
     } else {
       console.log('dry-run: off');
     }

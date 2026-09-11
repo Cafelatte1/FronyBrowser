@@ -1,7 +1,7 @@
 /**
  * 등록 화면의 스키마 — 그룹·항목·입력 형식. DOM을 모른다 (테스트가 그대로 import한다).
  *
- * 키 이름은 서버 policy.toml의 [keys]와 맞아야 fill이 된다 — frontend/test/unit/schema.test가 대조한다.
+ * 키 이름은 호출 서비스(FronyShopping)의 플레이북이 참조하는 이름과 맞아야 한다 — 서버 정책은 없다 (FWL-055).
  * backend 코드는 import하지 않는다 (규칙 12).
  */
 
@@ -9,9 +9,11 @@ export type FieldDef = {
   key: string; label: string; type: string;
   /** 입력 형식 안내 — pattern이 있으면 저장 전에 검사한다 */
   hint?: string; pattern?: RegExp; secret?: boolean;
+  /** pay grant가 있어야만 입력되는 키 — 금고 항목에 그대로 저장된다 */
+  grant?: boolean;
 };
 export type SectionDef = { id: string; title: string; blurb: string; fields: FieldDef[] };
-export type KeyInfo = { name: string; type: string; len: number };
+export type KeyInfo = { name: string; type: string; len: number; grant: boolean };
 
 export const DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 /**
@@ -41,7 +43,7 @@ export const SECTIONS: SectionDef[] = [
       { key: 'card.personal.number', label: 'Card number', type: 'card', hint: '0000-0000-0000-0000', pattern: /^\d{4}-\d{4}-\d{4}-\d{4}$/ },
       { key: 'card.personal.expiry', label: 'Expiry', type: 'text', hint: 'MM/YY', pattern: /^(0[1-9]|1[0-2])\/\d{2}$/ },
       { key: 'card.personal.cvv', label: 'CVV', type: 'text', hint: '3 digits', pattern: /^\d{3}$/, secret: true },
-      { key: 'card.personal.password2', label: 'Card password', type: 'text', hint: '2 digits', pattern: /^\d{2}$/, secret: true },
+      { key: 'card.personal.password2', label: 'Card password', type: 'text', hint: '2 digits', pattern: /^\d{2}$/, secret: true, grant: true },
     ],
   },
   {

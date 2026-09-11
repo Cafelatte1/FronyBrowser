@@ -21,7 +21,7 @@ export type AuditEvent =
   | 'snapshot'
   /** 요소 대기가 끝났다 (FWL-030). 필드: ref, timeoutMs */
   | 'wait'
-  | 'policy_denied' | 'expect_mismatch' | 'grant_denied'
+  | 'policy_denied' | 'grant_denied'
   | 'approval_created' | 'approval_granted' | 'approval_denied' | 'approval_expired'
   | 'scrub_hit'
   | 'vault_unlock' | 'vault_lock' | 'vault_set' | 'vault_rm'

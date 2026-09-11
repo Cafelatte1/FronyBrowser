@@ -1,25 +1,12 @@
 /**
- * 프론트 스키마 ↔ 서버 정책(config/policy.example.toml) 대조.
+ * 프론트 스키마 자체의 규칙 — 키 이름·타입·마스킹과 입력 형식 검사.
  *
- * 등록 화면에서 넣을 수 있는 키와 서버가 fill을 허용하는 키가 어긋나면 "등록은 됐는데 입력은 거부"가 된다.
- * policy.toml은 문서로만 읽는다 — backend 코드는 import하지 않는다 (규칙 12).
+ * backend 코드는 import하지 않는다 (규칙 12).
  */
 
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
-import { parse as parseToml } from 'smol-toml';
 import { describe, expect, it } from 'vitest';
-import { EXTRA_KEY, SCHEMA_KEYS, SECTIONS, checkFields, groupOf, isSecretKey, type FieldDef } from '../../src/schema.js';
+import { EXTRA_KEY, SECTIONS, checkFields, groupOf, isSecretKey, type FieldDef } from '../../src/schema.js';
 import { fmtRemain } from '../../src/format.js';
-
-type PolicyDoc = {
-  keys?: Record<string, { type?: string; allow_origins?: string[] }>;
-  origins?: Record<string, { label?: string }>;
-};
-
-const policy = parseToml(readFileSync(resolve(process.cwd(), 'config/policy.example.toml'), 'utf8')) as PolicyDoc;
-const policyKeys = Object.entries(policy.keys ?? {});
-const policyOrigins = Object.keys(policy.origins ?? {});
 
 const VALUE_TYPES = new Set(['card', 'phone', 'rrn', 'email', 'name', 'address', 'text']);
 
@@ -39,39 +26,6 @@ describe('스키마 자체', () => {
     expect(EXTRA_KEY.test('example-shop.payment.pinnumber')).toBe(true);
     expect(EXTRA_KEY.test('profile.address')).toBe(true);
     for (const bad of ['memo', 'a.b.c.d', 'A.B.C', 'a..c', 'a.b.c ', 'a.']) expect(EXTRA_KEY.test(bad), bad).toBe(false);
-  });
-});
-
-describe('policy.toml 대조', () => {
-  it('정책의 모든 키는 화면에서 등록할 수 있다 — 섹션 항목이거나 규칙에 맞는 기타 키', () => {
-    for (const [name] of policyKeys) {
-      expect(SCHEMA_KEYS.has(name) || EXTRA_KEY.test(name), `policy key not registrable from GUI: ${name}`).toBe(true);
-    }
-  });
-
-  it('섹션 항목은 전부 정책에 있고 타입이 같다 — 화면에서 등록되는데 정책이 모르는 키는 없어야 한다 (2026-09-06)', () => {
-    for (const f of SECTIONS.flatMap((s) => s.fields)) {
-      const k = policy.keys?.[f.key];
-      expect(k, `schema key missing from policy.toml: ${f.key}`).toBeDefined();
-      expect(k?.type, f.key).toBe(f.type);
-    }
-  });
-
-  it('등록된 origin마다 허용된 키가 최소 하나는 있다 — 세션은 열리는데 아무것도 못 넣는 origin이 없어야 한다', () => {
-    expect(policyOrigins.length).toBeGreaterThan(0);
-    for (const origin of policyOrigins) {
-      const allowed = policyKeys.filter(([, k]) => (k.allow_origins ?? []).includes(origin)).map(([n]) => n);
-      expect(allowed.length, `no key allows ${origin}`).toBeGreaterThan(0);
-    }
-  });
-
-  it('등록된 origin은 배송 정보(profile.phone·profile.address)를 받을 수 있다', () => {
-    expect(policyOrigins.length).toBeGreaterThan(0);
-    for (const origin of policyOrigins) {
-      for (const key of ['profile.phone', 'profile.address']) {
-        expect(policy.keys?.[key]?.allow_origins ?? [], `${key} @ ${origin}`).toContain(origin);
-      }
-    }
   });
 });
 

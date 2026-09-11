@@ -9,7 +9,7 @@
 import { EXTRA_KEY, SCHEMA_KEYS, SECTIONS, checkFields, groupOf, isSecretKey, type FieldDef, type KeyInfo } from './schema.js';
 import { fmtRemain } from './format.js';
 
-type Row = { key: string; type: string; input: HTMLInputElement; field?: FieldDef; label: string };
+type Row = { key: string; type: string; grant: boolean; input: HTMLInputElement; field?: FieldDef; label: string };
 /** 그룹 id → 그 그룹의 입력칸. 내장 그룹은 SECTIONS.id, 기타 키는 이름의 첫 세그먼트 */
 const groups = new Map<string, Row[]>();
 let current = SECTIONS[0]!.id;
@@ -133,7 +133,7 @@ for (const btn of document.querySelectorAll<HTMLButtonElement>('.btn-unlock')) {
 }
 
 // ── dry-run 토글 ─────────────────────────────────────────────
-// 켜져 있으면 결제 비밀번호(require_grant 키) fill이 grant 검증까지만 하고 입력하지 않는다.
+// 켜져 있으면 결제 비밀번호(grant 플래그 키) fill이 grant 검증까지만 하고 입력하지 않는다.
 // 실결제 없이 E2E를 돌리는 스위치 — 켜진 채 두면 실주행이 조용히 결제 없이 끝나므로 레일에 크게 띄운다
 
 function renderDryRun(on: boolean): void {
@@ -200,7 +200,7 @@ function fieldRow(field: FieldDef, info: KeyInfo | undefined): { row: HTMLElemen
   const head = el('div');
   const label = el('div', 'label', field.label);
   if (field.secret) label.insertAdjacentHTML('beforeend', LOCK_SVG);
-  head.append(label, el('div', 'key', field.key));
+  head.append(label, el('div', 'key', `${field.key}${field.grant ? ' · grant' : ''}`));
   const input = el('input');
   // 화면 마스킹은 CVV·카드 비번만 — 나머지는 사람이 확인하며 적도록 평문 표시
   input.type = field.secret ? 'password' : 'text';
@@ -214,7 +214,7 @@ function freeRow(k: KeyInfo): { row: HTMLElement; input: HTMLInputElement } {
   const row = el('div', 'row free');
   row.dataset['key'] = k.name;
   const head = el('div');
-  head.append(el('div', 'label', k.name), el('div', 'key', `type ${k.type}`));
+  head.append(el('div', 'label', k.name), el('div', 'key', `type ${k.type}${k.grant ? ' · grant' : ''}`));
   const input = el('input');
   input.type = isSecretKey(k.name) ? 'password' : 'text';
   input.autocomplete = 'off';
@@ -258,7 +258,7 @@ function render(): void {
     for (const f of s.fields) {
       const { row, input } = fieldRow(f, existing.get(f.key));
       body.append(row);
-      rows.push({ key: f.key, type: f.type, input, field: f, label: f.label });
+      rows.push({ key: f.key, type: f.type, grant: f.grant === true, input, field: f, label: f.label });
     }
     groups.set(s.id, rows);
     panes.append(p);
@@ -279,11 +279,11 @@ function render(): void {
     for (const k of keys.sort((a, b) => a.name.localeCompare(b.name))) {
       const { row, input } = freeRow(k);
       body.append(row);
-      rows.push({ key: k.name, type: k.type, input, label: k.name });
+      rows.push({ key: k.name, type: k.type, grant: k.grant, input, label: k.name });
     }
     const noteEl = el('div', 'note');
     noteEl.insertAdjacentHTML('beforeend', '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="7"/><path d="M10 13.4V9.2M10 6.6h.01" stroke-linecap="round"/></svg>');
-    noteEl.append(el('span', undefined, "A registered key still needs the server's policy to name an origin for it. Registering here does not make a value fillable anywhere."));
+    noteEl.append(el('span', undefined, 'A key marked grant is filled only when the calling service hands over a pay grant for the session. Everything else fills wherever the agent points it.'));
     body.append(noteEl);
     groups.set(g, rows);
     panes.append(p);
@@ -340,7 +340,7 @@ async function saveGroup(): Promise<void> {
   try {
     await api('/vault/set', {
       passphrase: passphrase(),
-      entries: pending.map((r) => ({ key: r.key, type: r.type, value: r.input.value })),
+      entries: pending.map((r) => ({ key: r.key, type: r.type, value: r.input.value, grant: r.grant })),
     });
     for (const r of pending) r.input.value = '';
     note(true, `Saved ${pending.length} ${pending.length === 1 ? 'key' : 'keys'} in ${title} — ${pending.map((r) => r.key).join(', ')}. Status refreshed.`);
@@ -357,9 +357,13 @@ async function saveFreeKey(): Promise<void> {
   if (!EXTRA_KEY.test(key)) return note(false, 'Key names are scope.field or scope.instance.field (e.g. example-shop.payment.pinnumber).');
   if (!value) return note(false, 'Enter a value.');
   try {
-    await api('/vault/set', { passphrase: passphrase(), key, type: $<HTMLSelectElement>('free-type').value, value });
+    await api('/vault/set', {
+      passphrase: passphrase(), key, type: $<HTMLSelectElement>('free-type').value, value,
+      grant: $<HTMLInputElement>('free-grant').checked,
+    });
     $<HTMLInputElement>('free-key').value = '';
     $<HTMLInputElement>('free-value').value = '';
+    $<HTMLInputElement>('free-grant').checked = false;
     note(true, `Saved ${key}. Status refreshed.`);
     current = groupOf(key);
     void refreshHealth();

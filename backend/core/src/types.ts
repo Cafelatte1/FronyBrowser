@@ -100,7 +100,6 @@ export const ERROR_CODES = {
   vault_locked: { retriable: false },
   key_not_found: { retriable: false },
   origin_not_permitted: { retriable: false },
-  selector_mismatch: { retriable: false },
   grant_required: { retriable: false },
   grant_invalid: { retriable: false },
   stale_ref: { retriable: true },
@@ -113,8 +112,6 @@ export const ERROR_CODES = {
   session_limit: { retriable: true },
   lease_conflict: { retriable: true },
   browser_unavailable: { retriable: false },
-  amount_mismatch: { retriable: false },
-  amount_unavailable: { retriable: false },
   approval_denied: { retriable: false },
   approval_expired: { retriable: false },
   navigation_failed: { retriable: true },
@@ -124,7 +121,7 @@ export const ERROR_CODES = {
 export type ErrorCode = keyof typeof ERROR_CODES;
 
 /**
- * 세션이 도는 브라우저 프로필. origin별 정책이 고른다 — 호출자가 정하지 않는다 (규칙 7).
+ * 세션이 도는 브라우저 프로필. session_begin에서 호출자가 고른다 (FWL-055).
  *   chromium — Playwright 새 headless Chromium (기본)
  *   chrome   — 시스템에 설치된 실제 Chrome 채널 (봇탐지가 센 사이트용, 서버에 없으면 browser_unavailable)
  */
@@ -132,13 +129,13 @@ export type BrowserProfile = 'chromium' | 'chrome';
 
 /**
  * 세션이 붙는 타겟의 종류 (FWL-037). 'browser'가 내장이고, 다른 종류는 어댑터가 ActionTarget을
- * 그 이름으로 등록하며 생긴다. 정책 origins.kind가 고르고, 핸들러는 세션의 kind로 타겟을 찾는다.
- * 등록되지 않은 kind는 기동 시 거부된다 (fail-closed)
+ * 그 이름으로 등록하며 생긴다. session_begin의 kind가 고르고, 핸들러는 세션의 kind로 타겟을 찾는다.
+ * 등록되지 않은 kind는 bad_request다 (fail-closed)
  */
 export type TargetKind = string;
 
 /**
- * 브라우저 타겟의 기동 프로필 = 엔진 + 모드. 둘 다 origin별 정책이 정한다 (FWL-017·018).
+ * 브라우저 타겟의 기동 프로필 = 엔진 + 모드. 둘 다 session_begin에서 호출자가 정한다 (FWL-055).
  * headful은 interactive 로그온이 있는 환경에서만 뜬다 — 못 띄우면 browser_unavailable.
  */
 export type BrowserLaunchProfile = {

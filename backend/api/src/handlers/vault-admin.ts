@@ -52,10 +52,11 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
       key: string,
       type: string,
       value: string,
-    ): Promise<Result<{ key: string; type: ValueType; len: number }>> {
-      const r = await this.setMany(caller, passphrase, [{ key, type, value }]);
+      grant = false,
+    ): Promise<Result<{ key: string; type: ValueType; len: number; grant: boolean }>> {
+      const r = await this.setMany(caller, passphrase, [{ key, type, value, grant }]);
       if (!r.ok) return r;
-      const first = r.keys[0] as { key: string; type: ValueType; len: number };
+      const first = r.keys[0] as { key: string; type: ValueType; len: number; grant: boolean };
       return { ok: true, ...first };
     },
 
@@ -63,16 +64,17 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
     async setMany(
       caller: Caller,
       passphrase: string,
-      items: ReadonlyArray<{ key: string; type: string; value: string }>,
-    ): Promise<Result<{ keys: Array<{ key: string; type: ValueType; len: number }> }>> {
+      items: ReadonlyArray<{ key: string; type: string; value: string; grant?: boolean }>,
+    ): Promise<Result<{ keys: Array<{ key: string; type: ValueType; len: number; grant: boolean }> }>> {
       if (items.length === 0) return fail('bad_request', 'no entries');
-      for (const { key, type, value } of items) {
+      for (const { key, type, value, grant } of items) {
         if (!KEY_NAME.test(key)) return fail('bad_request', 'invalid key name');
         if (!VALUE_TYPES.has(type)) return fail('bad_request', 'invalid type');
         if (value.length === 0) return fail('bad_request', 'empty value');
+        if (grant !== undefined && typeof grant !== 'boolean') return fail('bad_request', 'invalid grant');
       }
       try {
-        const entries: Array<readonly [string, VaultEntry]> = items.map(({ key, type, value }) => [key, { type: type as ValueType, value }]);
+        const entries: Array<readonly [string, VaultEntry]> = items.map(({ key, type, value, grant }) => [key, { type: type as ValueType, value, grant: grant === true }]);
         setVaultEntries(vaultFile, passphrase, entries, cipher);
         await refresh(passphrase);
       } catch {
@@ -81,7 +83,7 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
         return fail('vault_locked', 'wrong passphrase or account mismatch');
       }
       for (const { key, value } of items) log(caller, 'vault_set', key, true, value.length);
-      return { ok: true, keys: items.map(({ key, type, value }) => ({ key, type: type as ValueType, len: value.length })) };
+      return { ok: true, keys: items.map(({ key, type, value, grant }) => ({ key, type: type as ValueType, len: value.length, grant: grant === true })) };
     },
 
     async rm(caller: Caller, passphrase: string, key: string): Promise<Result<{ key: string }>> {
@@ -101,7 +103,7 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
     async overview(
       _caller: Caller,
       passphrase: string,
-    ): Promise<Result<{ keys: Array<{ name: string; type: ValueType; len: number }> }>> {
+    ): Promise<Result<{ keys: Array<{ name: string; type: ValueType; len: number; grant: boolean }> }>> {
       try {
         return { ok: true, keys: overviewVaultFile(vaultFile, passphrase, cipher) };
       } catch {
