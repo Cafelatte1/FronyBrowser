@@ -9,7 +9,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { consumeUnlockHandoff, createMemoryAudit, createMemoryDryRun, createSessionStore, createVault, parsePolicy } from '@wallet/core';
+import { consumeUnlockHandoff, createMemoryAudit, createMemoryDryRun, createSessionStore, createVault } from '@wallet/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { fakeCipher, fakeTarget } from '../helpers/fakes.js';
 import type { AdminVerifier } from '@wallet/api';
@@ -50,7 +50,6 @@ beforeAll(async () => {
 
   const handlers = createHandlers({
     vault,
-    policy: parsePolicy(''),
     sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }),
     targets: new Map([['browser', target]]),
     audit,
@@ -112,7 +111,7 @@ describe('Funnel 커넥터 (FWL-040)', () => {
 
   it('publicUrl 있음: 401에 resource_metadata(.well-known은 호스트 바로 뒤 + 접두), 메타데이터는 resource/issuer', async () => {
     const pub = createHttpServer({
-      handlers: createHandlers({ vault, policy: parsePolicy(''), sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }), targets: new Map([['browser', target]]), audit }),
+      handlers: createHandlers({ vault, sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }), targets: new Map([['browser', target]]), audit }),
       vault, audit, verify, adminClients: [],
       vaultAdmin: createVaultAdmin({ vaultFile, vault, audit, cipher: fakeCipher }),
       vaultFile, verifyAdmin, staticDir,
@@ -344,7 +343,7 @@ describe('로컬 모드 (FWL-053)', () => {
   beforeAll(async () => {
     local = createHttpServer({
       handlers: createHandlers({
-        vault, policy: parsePolicy(''),
+        vault,
         sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }),
         targets: new Map([['browser', target]]), audit,
       }),

@@ -25,7 +25,7 @@ export type McpDeps = {
 
 export const INSTRUCTIONS = `FronyBrowser is a secure browser. It fills personal data (card numbers, login passwords, payment PINs) from a server-side vault by key name: you send "{{vault:key}}" placeholders and never see, receive, or need the value.
 
-Responses: every tool returns JSON, either { "ok": true, ... } or { "ok": false, "error": { "code", "message", "retriable" } }. "retriable": true (stale_ref, element_not_actionable, session_limit, lease_conflict, navigation_failed, timeout) means the same call may succeed later; after stale_ref take a new snapshot first. These codes need a human and must not be retried — report the code to the user and stop: vault_locked (the operator runs "wallet unlock"), keypad_unresolved (the secure keypad's markup changed), grant_required / grant_invalid (the pay grant is missing, expired, already used, or for another session), amount_mismatch / amount_unavailable (the page total exceeds expect.maxAmount, or could not be read).
+Responses: every tool returns JSON, either { "ok": true, ... } or { "ok": false, "error": { "code", "message", "retriable" } }. "retriable": true (stale_ref, element_not_actionable, session_limit, lease_conflict, navigation_failed, timeout) means the same call may succeed later; after stale_ref take a new snapshot first. These codes need a human and must not be retried — report the code to the user and stop: vault_locked (the operator runs "wallet unlock"), keypad_unresolved (the secure keypad's markup changed), grant_required / grant_invalid (the pay grant is missing, expired, already used, or for another session).
 
 Values never come back: snapshots omit input values, fill responses carry only the key name and length, and any vault value a page echoes is replaced by [REDACTED:key].
 
@@ -49,14 +49,12 @@ export function buildMcpServer(deps: McpDeps, caller: Caller): McpServer {
     'session_begin',
     {
       description:
-        'Open a browser session bound to one exact origin (session = one origin). The origin\'s exclusive lease, browser profile and stored login session are fixed here, and your navigate calls must stay inside this origin (redirects the page performs itself, e.g. to a payment or login provider, are allowed). Declare expect.maxAmount to have the visible page total checked before clicks. The response carries storedLogin: true when a stored login context was injected (it may have expired — verify on the page), false when this origin has none yet (go straight to the login page and use the vault login keys); neither is an error. vault_locked needs a human (operator runs "wallet unlock") — report and stop.',
+        'Open a browser session bound to one exact origin (session = one origin). The origin\'s exclusive lease and stored login session are fixed here; browser/headless are chosen by you and fixed for the session. Your navigate calls must stay inside this origin (redirects the page performs itself, e.g. to a payment or login provider, are allowed). The response carries storedLogin: true when a stored login context was injected (it may have expired — verify on the page), false when this origin has none yet (go straight to the login page and use the vault login keys); neither is an error. vault_locked needs a human (operator runs "wallet unlock") — report and stop.',
       inputSchema: {
         origin: z.string().describe('Exact origin of the target site, e.g. "https://shop.example" — scheme and host only, no path, no wildcard.'),
-        expect: z
-          .object({
-            maxAmount: z.number().optional().describe('Upper bound for the total shown on the page. A click fails with amount_mismatch when the visible total exceeds it (a small tolerance applies); a lower total passes.'),
-          })
-          .optional(),
+        kind: z.string().optional().describe('Target kind. Omit for the browser (the only kind in this build).'),
+        browser: z.enum(['chromium', 'chrome']).optional().describe('Browser engine. "chromium" (default) is the bundled test build; "chrome" is the installed Google Chrome, for sites whose bot detection rejects chromium. Fails with browser_unavailable if Chrome is not installed.'),
+        headless: z.boolean().optional().describe('Default true. false opens a visible window (needed by some bot-protected sites); fails with browser_unavailable when no desktop session is available. Fixed per session.'),
         traceId: z.string().optional().describe('Opaque correlation id from the calling service, recorded verbatim in the audit log for joining. No personal data.'),
         onApproval: z.enum(['wait', 'fail_fast']).optional().describe('Reserved for the approval channel; not active in this version (recorded only).'),
       },
@@ -144,26 +142,32 @@ export function buildMcpServer(deps: McpDeps, caller: Caller): McpServer {
     'fill',
     {
       description:
-        'Type into a field. Put "{{vault:key}}" placeholders in the value; the server substitutes the real value, which never appears in any response. Available keys: vault_list. For keys whose policy is keypad mode (payment PINs on secure keypads) point ref at any element inside the keypad frame, e.g. its heading — the server presses the digit keys itself and reports keypad_unresolved if it cannot read the keypad. Never click digit keys yourself. Keys marked require_grant additionally need grant.',
+        'Type into a field. Put "{{vault:key}}" placeholders in the value; the server substitutes the real value, which never appears in any response. Available keys: vault_list. For a secure keypad (payment PINs) pass keypad and point ref at any element inside the keypad frame, e.g. its heading — the server presses the digit keys itself and reports keypad_unresolved if it cannot read the keypad. Never click digit keys yourself. Keys registered with the grant flag additionally need grant.',
       inputSchema: {
         sessionId,
         ref,
-        value: z.string().describe('Text to type; may contain "{{vault:key}}" placeholders. A keypad-mode key must be the whole value.'),
+        value: z.string().describe('Text to type; may contain "{{vault:key}}" placeholders. A keypad key must be the whole value.'),
         grant: z
           .string()
           .optional()
-          .describe('Pay grant token issued by the trusted grant issuer that shares this server\'s grant key. Required only for require_grant keys (payment PINs). Valid 5 minutes, single use, bound to this session.'),
+          .describe('Pay grant token issued by the trusted grant issuer that shares this server\'s grant key. Required only for keys registered with the grant flag (payment PINs, card passwords). Valid 5 minutes, single use, bound to this session.'),
+        keypad: z
+          .union([
+            z.object({ digitSelector: z.string() }),
+            z.object({ keySelector: z.string(), cellSelector: z.string(), resolver: z.literal('sprite-template') }),
+          ])
+          .optional()
+          .describe('Secure keypad mode: the server presses one key per digit instead of typing. digitSelector is a CSS selector with "{digit}" as the placeholder for the digit; the sprite form is for keypads whose digits are background images. The value must be exactly one "{{vault:key}}" holding digits only.'),
       },
     },
-    async ({ sessionId: sid, ref: r, value, grant }) =>
-      out('fill', await deps.handlers.fill(caller, sid as SessionId, r as Ref, value, grant)),
+    async ({ sessionId: sid, ref: r, value, grant, keypad }) =>
+      out('fill', await deps.handlers.fill(caller, sid as SessionId, r as Ref, value, grant, keypad)),
   );
 
   server.registerTool(
     'click',
     {
-      description:
-        'Click an element. If the session declared expect.maxAmount, the page total is checked first and the click is refused with amount_mismatch or amount_unavailable.',
+      description: 'Click an element.',
       inputSchema: { sessionId, ref },
     },
     async ({ sessionId: sid, ref: r }) => out('click', await deps.handlers.click(caller, sid as SessionId, r as Ref)),

@@ -5,11 +5,10 @@
  *   WALLET_BIND           바인딩 주소. 기본: `tailscale ip -4` → 실패 시 127.0.0.1
  *   WALLET_PORT           기본 9420
  *   WALLET_DATA_DIR       기본 %LOCALAPPDATA%\Frony\FronyBrowser\data (홈서버 관행)
- *   WALLET_POLICY         기본 <WALLET_DATA_DIR>\policy.toml — 처음엔 config/policy.example.toml을 복사한다
  *   FRONY_AUTH_URL        필수 — FronyAuth introspect URL (예 http://<fronyauth-host>:8640/introspect)
  *   FRONY_SERVICE_KEY     필수 — 없으면 기동 거부 (fauth keygen FronyBrowser)
- *   FRONY_GRANT_KEY       grant 발급자와 공유하는 pay grant HMAC 키. policy에 require_grant 키가
- *                         하나라도 있으면 필수 — 없으면 기동 거부 (계약: docs/pay-grant.md)
+ *   FRONY_GRANT_KEY       grant 발급자와 공유하는 pay grant HMAC 키. 없으면 grant 플래그 키는
+ *                         채울 수 없다 (계약: docs/pay-grant.md)
  *   WALLET_ADMIN_CLIENTS  vault_unlock 허용 클라이언트 id, 콤마 구분
  *   WALLET_UNLOCK_TTL     unlock 유지 시간 (기본 15m). 단일 사용자 홈서버는 72h 권장 —
  *                         재시작 때만 다시 열면 되고 keepalive도 무인으로 돈다
@@ -20,11 +19,10 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPlaywrightTarget, createBrowserPool, hasStorageState, mergeStorageStates, persistStorageStates } from '@wallet/app';
-import { VaultLockedError, consumeUnlockHandoff, createAudit, createDryRun, createSessionStore, createVault, defaultDataDir, loadPolicy, policyRequiresGrant } from '@wallet/core';
+import { VaultLockedError, consumeUnlockHandoff, createAudit, createDryRun, createSessionStore, createVault, defaultDataDir } from '@wallet/core';
 import { parseDuration } from '@wallet/core';
 import { createAdminVerifier } from './auth-admin.js';
 import { createIntrospectionVerifier } from './auth.js';
@@ -70,7 +68,6 @@ function main(): void {
   const auth = local ? null : requireAuthEnv();
 
   const dataDir = defaultDataDir();
-  const policyPath = process.env['WALLET_POLICY'] ?? join(dataDir, 'policy.toml');
   const bind = local ? process.env['WALLET_BIND'] ?? '127.0.0.1' : process.env['WALLET_BIND'] ?? tailscaleIp() ?? '127.0.0.1';
   const port = Number(process.env['WALLET_PORT'] ?? 9420);
   if (local) {
@@ -86,16 +83,8 @@ function main(): void {
   }
   assertBindable(bind);
 
-  if (!existsSync(policyPath)) {
-    console.error(`policy not found: ${policyPath} — copy config/policy.example.toml there or set WALLET_POLICY`);
-    process.exit(1);
-  }
-  const policy = loadPolicy(policyPath); // fail-closed — 오타 있으면 여기서 죽는다
   const grantKey = process.env['FRONY_GRANT_KEY'] ?? null;
-  if (policyRequiresGrant(policy) && !grantKey) {
-    console.error('FRONY_GRANT_KEY가 없습니다 — policy에 require_grant 키가 있어 기동 거부');
-    process.exit(1);
-  }
+  if (!grantKey) console.warn('FRONY_GRANT_KEY 없음 — grant 플래그가 켜진 키의 fill은 전부 grant_invalid로 거부된다');
   const vaultFile = join(dataDir, 'vault.dpapi');
   const unlockTtlMs = parseDuration(process.env['WALLET_UNLOCK_TTL'] ?? '15m', 'WALLET_UNLOCK_TTL');
   const vault = createVault(vaultFile, { ttlMs: unlockTtlMs });
@@ -117,7 +106,7 @@ function main(): void {
   }
   // dry-run 토글 — 관리 UI가 켜고 끈다. 켜진 채 실주행하면 결제가 조용히 빠지므로 기동 때마다 크게 알린다 (FWL-035)
   const dryRun = createDryRun(join(dataDir, 'dry-run.json'));
-  if (dryRun.get()) console.warn('★ DRY RUN 켜짐 — require_grant 키는 grant 검증·소모만 하고 입력하지 않는다. 관리 UI에서 끈다');
+  if (dryRun.get()) console.warn('★ DRY RUN 켜짐 — grant 플래그 키는 grant 검증·소모만 하고 입력하지 않는다. 관리 UI에서 끈다');
   // 세션 수명 (FWL-036): 배포별로 조정한다. 스윕 주기는 TTL에서 끌어내 짧은 TTL도 지켜지게
   const sessionTtlMs = parseDuration(process.env['WALLET_SESSION_TTL'] ?? '15m', 'WALLET_SESSION_TTL');
   const maxSessions = Number(process.env['WALLET_MAX_SESSIONS'] ?? 4);
@@ -156,7 +145,7 @@ function main(): void {
       }, origin);
     },
   });
-  const handlers = createHandlers({ vault, policy, sessions, targets: new Map([['browser', target]]), audit, grantKey, dryRun, handoffFile });
+  const handlers = createHandlers({ vault, sessions, targets: new Map([['browser', target]]), audit, grantKey, dryRun, handoffFile });
 
   // 로컬 모드에선 authenticate와 /login이 먼저 끊어 이 자리에 닿지 않는다 (FWL-053)
   const notUsedInLocalMode = (): never => {

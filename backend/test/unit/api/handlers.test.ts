@@ -8,72 +8,33 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DryRun } from '@wallet/core';
-import { VaultLockedError, createMemoryAudit, createMemoryDryRun, createSessionStore, createVault, parsePolicy, writeVaultFile } from '@wallet/core';
+import { VaultLockedError, createMemoryAudit, createMemoryDryRun, createSessionStore, createVault, writeVaultFile } from '@wallet/core';
 import { describe, expect, it } from 'vitest';
 import { createHandlers } from '@wallet/api';
 import { fakeCipher, fakeTarget, fakeVault } from '../../helpers/fakes.js';
 import { freshGrant } from '../../helpers/fakes.js';
 import type { FakeTargetOptions } from '../../helpers/fakes.js';
 
-const POLICY = parsePolicy(`
-[keys."phone"]
-type = "phone"
-allow_origins = ["https://shop.com"]
-
-[keys."card.number"]
-type = "card"
-allow_origins = ["https://pay.pg.com"]
-require_selector = "input[autocomplete='cc-number']"
-
-[keys."shop.payment.pinnumber"]
-type = "text"
-allow_origins = ["https://shop.com"]
-require_grant = true
-
-[keys."shop.keypad.pin"]
-type = "text"
-allow_origins = ["https://shop.com"]
-input_mode = "keypad"
-keypad_digit_selector = "img.kpd[aria-label='{digit}']"
-
-[keys."shop.keypad.broken"]
-type = "text"
-allow_origins = ["https://shop.com"]
-input_mode = "keypad"
-keypad_digit_selector = "img.kpd[aria-label='{digit}']"
-
-[keys."shop.keypad.grantpin"]
-type = "text"
-allow_origins = ["https://shop.com"]
-require_grant = true
-input_mode = "keypad"
-keypad_digit_selector = "img.kpd[aria-label='{digit}']"
-
-[keys."shop.keypad.sprite"]
-type = "text"
-allow_origins = ["https://shop.com"]
-input_mode = "keypad"
-keypad_digit_resolver = "sprite-template"
-keypad_key_selector = "a.pad-key"
-keypad_cell_selector = "span[class^=pad-pos-]"
-
-[approval]
-amount_fallback = "deny"
-amount_tolerance = "3%"
-
-[origins."https://shop.com"]
-label = "Shop"
-amount_selector = ".total"
-`);
-
 const GRANT_KEY = 'test-grant-key';
 
+const ENTRIES = {
+  phone: { type: 'phone', value: '01012345678', grant: false },
+  'card.number': { type: 'card', value: '1234567812345678', grant: false },
+  'shop.payment.pinnumber': { type: 'text', value: '1234', grant: true },
+  'shop.keypad.pin': { type: 'text', value: '739105', grant: false },
+  'shop.keypad.broken': { type: 'text', value: 'ab-cd', grant: false },
+  'shop.keypad.grantpin': { type: 'text', value: '5678', grant: true },
+  'shop.keypad.sprite': { type: 'text', value: '4951', grant: false },
+} as const;
+
+const KEYPAD = { digitSelector: "img.kpd[aria-label='{digit}']" };
+const SPRITE = { keySelector: 'a.pad-key', cellSelector: 'span[class^=pad-pos-]', resolver: 'sprite-template' } as const;
+
 function setup(over: FakeTargetOptions = {}, now?: () => number, dryRun?: DryRun) {
-  const state = fakeTarget({ url: 'https://shop.com/checkout', amountText: '15,000원', ...over });
+  const state = fakeTarget({ url: 'https://shop.com/checkout', ...over });
   const audit = createMemoryAudit();
   const handlers = createHandlers({
-    vault: fakeVault({ entries: { phone: { type: 'phone', value: '01012345678' }, 'card.number': { type: 'card', value: '1234567812345678' }, 'shop.payment.pinnumber': { type: 'text', value: '1234' }, 'shop.keypad.pin': { type: 'text', value: '739105' }, 'shop.keypad.broken': { type: 'text', value: 'ab-cd' }, 'shop.keypad.grantpin': { type: 'text', value: '5678' }, 'shop.keypad.sprite': { type: 'text', value: '4951' } } }),
-    policy: POLICY,
+    vault: fakeVault({ entries: { ...ENTRIES } }),
     sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2, ...(now ? { now } : {}) }),
     targets: new Map([['browser', state.target]]),
     audit,
@@ -86,8 +47,8 @@ function setup(over: FakeTargetOptions = {}, now?: () => number, dryRun?: DryRun
 const caller = { client: 'frony' };
 const ref = '1:e1' as Ref;
 
-async function begin(handlers: ReturnType<typeof createHandlers>, expect?: { maxAmount: number }, origin = 'https://shop.com') {
-  const r = await handlers.session_begin(caller, expect ? { origin, expect } : { origin });
+async function begin(handlers: ReturnType<typeof createHandlers>, origin = 'https://shop.com') {
+  const r = await handlers.session_begin(caller, { origin });
   if (!r.ok) throw new Error('begin failed');
   return r.sessionId;
 }
@@ -104,40 +65,26 @@ describe('fill', () => {
     expect(JSON.stringify(fillLog)).not.toContain('01012345678'); // 감사 로그에 값 없음 (규칙 5)
   });
 
-  it('허용되지 않은 프레임 origin은 origin_not_permitted + policy_denied 감사', async () => {
-    const { handlers, audit } = setup({ frameOrigin: 'https://evil.com' });
+  it('어느 프레임 origin이든 채운다 — origin 규칙 없음 (FWL-055)', async () => {
+    const { handlers, audit, state } = setup({ frameOrigin: 'https://pay.pg.com' });
     const sid = await begin(handlers);
-    const r = await handlers.fill(caller, sid, ref, '{{vault:phone}}');
-    expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.error.code).toBe('origin_not_permitted');
-    expect(audit.records.some((x) => x.evt === 'policy_denied' && x.rule === 'origin')).toBe(true);
+    const r = await handlers.fill(caller, sid, ref, '{{vault:card.number}}');
+    expect(r).toEqual({ ok: true, filledFrom: 'card.number', len: 16 });
+    expect(state.filled[0]?.value).toBe('1234567812345678');
+    expect(audit.records.find((x) => x.evt === 'fill')).toMatchObject({ key: 'card.number', origin: 'https://pay.pg.com' });
   });
 
-  it('없는 키도 같은 origin_not_permitted — 금고 내용을 탐색당하지 않는다 (8.3)', async () => {
-    const { handlers } = setup();
+  it('금고에 없는 키는 key_not_found + policy_denied(vault_missing)', async () => {
+    const { handlers, audit, state } = setup();
     const sid = await begin(handlers);
-    const known = await handlers.fill(caller, sid, ref, '{{vault:card.number}}'); // policy에 있지만 이 origin 불허
-    const unknown = await handlers.fill(caller, sid, ref, '{{vault:no.such.key}}');
-    if (known.ok || unknown.ok) throw new Error('should fail');
-    expect(unknown.error.code).toBe(known.error.code);
-    expect(unknown.error.message).toBe(known.error.message);
-  });
-
-  it('require_selector — 대상 요소가 셀렉터에 안 맞으면 selector_mismatch + policy_denied(selector)', async () => {
-    const denied = setup({ frameOrigin: 'https://pay.pg.com', matches: false });
-    const sid = await begin(denied.handlers);
-    const r = await denied.handlers.fill(caller, sid, ref, '{{vault:card.number}}');
+    const r = await handlers.fill(caller, sid, ref, '{{vault:no.such.key}}');
     if (r.ok) throw new Error('should fail');
-    expect(r.error.code).toBe('selector_mismatch');
-    expect(denied.audit.records.some((x) => x.evt === 'policy_denied' && x.rule === 'selector')).toBe(true);
-    expect(denied.state.filled).toHaveLength(0);
-
-    const allowed = setup({ frameOrigin: 'https://pay.pg.com', matches: true });
-    const sid2 = await begin(allowed.handlers);
-    expect((await allowed.handlers.fill(caller, sid2, ref, '{{vault:card.number}}')).ok).toBe(true);
+    expect(r.error.code).toBe('key_not_found');
+    expect(state.filled).toHaveLength(0);
+    expect(audit.records.some((x) => x.evt === 'policy_denied' && x.rule === 'vault_missing')).toBe(true);
   });
 
-  it('플레이스홀더 없는 평문은 정책 검사 없이 그대로 입력된다', async () => {
+  it('플레이스홀더 없는 평문은 그대로 입력된다', async () => {
     const { handlers, state } = setup();
     const sid = await begin(handlers);
     const r = await handlers.fill(caller, sid, ref, '서울시 강남구');
@@ -204,7 +151,7 @@ describe('fill + pay grant (FWL-022, 규칙 13)', () => {
     expect(audit.records.some((x) => x.evt === 'grant_denied' && x.reason === 'reused')).toBe(true);
   });
 
-  it('require_grant가 아닌 키는 grant 없이 그대로 채워진다 — grant는 예외 경로다', async () => {
+  it('grant 플래그가 꺼진 키는 grant 없이 그대로 채워진다 — grant는 예외 경로다', async () => {
     const { handlers, audit } = setup();
     const sid = await begin(handlers);
     expect((await handlers.fill(caller, sid, ref, '{{vault:phone}}')).ok).toBe(true);
@@ -239,7 +186,7 @@ describe('fill — 보안 키패드 (FWL-033)', () => {
   it('keypad 키는 값을 채우지 않고 서버가 숫자 버튼을 누른다 — 값은 어디에도 안 남는다', async () => {
     const { handlers, audit, state } = setup();
     const sid = await begin(handlers);
-    const r = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.pin}}');
+    const r = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.pin}}', undefined, KEYPAD);
     expect(r).toEqual({ ok: true, filledFrom: 'shop.keypad.pin', len: 6 });
     expect(state.filled).toHaveLength(0); // fill intent는 나가지 않는다
     expect(state.intents).toEqual([
@@ -251,10 +198,18 @@ describe('fill — 보안 키패드 (FWL-033)', () => {
     expect(JSON.stringify(r)).not.toContain('739105');
   });
 
+  it('같은 키라도 keypad를 안 주면 평범한 text fill이다 — 모드는 호출자가 고른다 (FWL-055)', async () => {
+    const { handlers, audit, state } = setup();
+    const sid = await begin(handlers);
+    expect((await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.pin}}')).ok).toBe(true);
+    expect(state.filled[0]?.value).toBe('739105');
+    expect(audit.records.find((x) => x.evt === 'fill')).toMatchObject({ mode: 'text' });
+  });
+
   it('스프라이트 키패드 키는 keypad_sprite 인텐트로 간다 — 감사에 resolver, 값은 없다 (FWL-038)', async () => {
     const { handlers, audit, state } = setup();
     const sid = await begin(handlers);
-    const r = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.sprite}}');
+    const r = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.sprite}}', undefined, SPRITE);
     expect(r).toEqual({ ok: true, filledFrom: 'shop.keypad.sprite', len: 4 });
     expect(state.intents).toEqual([
       { kind: 'keypad_sprite', ref, keySelector: 'a.pad-key', cellSelector: 'span[class^=pad-pos-]', resolver: 'sprite-template', value: '4951' },
@@ -264,7 +219,7 @@ describe('fill — 보안 키패드 (FWL-033)', () => {
     expect(fillLog).toMatchObject({ key: 'shop.keypad.sprite', mode: 'keypad', resolver: 'sprite-template', len: 4 });
     expect(JSON.stringify(fillLog)).not.toContain('4951');
     // 숫자 규칙은 스프라이트 키패드에도 같다
-    const bad = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.sprite}}{{vault:phone}}');
+    const bad = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.sprite}}{{vault:phone}}', undefined, SPRITE);
     if (bad.ok) throw new Error('should fail');
     expect(bad.error.code).toBe('bad_request');
   });
@@ -279,7 +234,7 @@ describe('fill — 보안 키패드 (FWL-033)', () => {
   it('숫자가 아닌 금고 값은 bad_request — 브라우저에 아무것도 안 간다', async () => {
     const { handlers, audit, state } = setup();
     const sid = await begin(handlers);
-    const r = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.broken}}');
+    const r = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.broken}}', undefined, KEYPAD);
     if (r.ok) throw new Error('should fail');
     expect(r.error.code).toBe('bad_request');
     expect(state.intents).toHaveLength(0);
@@ -291,7 +246,7 @@ describe('fill — 보안 키패드 (FWL-033)', () => {
   it('키패드에 여러 키를 이어붙이면 bad_request — 자릿수 대응이 없다', async () => {
     const { handlers, state } = setup();
     const sid = await begin(handlers);
-    const r = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.pin}}{{vault:phone}}');
+    const r = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.pin}}{{vault:phone}}', undefined, KEYPAD);
     if (r.ok) throw new Error('should fail');
     expect(r.error.code).toBe('bad_request');
     expect(state.intents).toHaveLength(0);
@@ -310,7 +265,7 @@ describe('vault_handoff (FWL-042)', () => {
     try {
       const mk = (vaultOpts: { locked?: boolean; passphrase?: string }) => {
         const audit = createMemoryAudit();
-        const handlers = createHandlers({ vault: fakeVault(vaultOpts), policy: POLICY, sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }), targets: new Map([['browser', fakeTarget().target]]), audit, handoffFile, handoffCipher: fakeCipher });
+        const handlers = createHandlers({ vault: fakeVault(vaultOpts), sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }), targets: new Map([['browser', fakeTarget().target]]), audit, handoffFile, handoffCipher: fakeCipher });
         return { handlers, audit };
       };
       const locked = mk({ locked: true });
@@ -355,7 +310,7 @@ describe('fill — dry-run (FWL-035)', () => {
     const { handlers, audit, state } = setup({}, undefined, createMemoryDryRun(true));
     const sid = await begin(handlers);
     const token = freshGrant(GRANT_KEY, { session_id: String(sid) });
-    const r = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.grantpin}}', token);
+    const r = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.grantpin}}', token, KEYPAD);
     expect(r).toEqual({ ok: true, filledFrom: 'shop.keypad.grantpin', len: 4 });
     expect(state.intents.some((i) => i.kind === 'keypad')).toBe(false);
     expect(audit.records.find((x) => x.evt === 'fill')).toMatchObject({ mode: 'keypad', dry: true });
@@ -386,45 +341,6 @@ describe('fill — dry-run (FWL-035)', () => {
     const token = freshGrant(GRANT_KEY, { session_id: String(sid) });
     expect((await handlers.fill(caller, sid, ref, PIN, token)).ok).toBe(true);
     expect(state.filled[0]?.value).toBe('1234');
-  });
-});
-
-describe('click + expect 대조', () => {
-  it('금액이 상한 이내면 통과', async () => {
-    const { handlers } = setup({ amountText: '15,000원' });
-    const sid = await begin(handlers, { maxAmount: 16000 });
-    expect((await handlers.click(caller, sid, ref)).ok).toBe(true);
-  });
-
-  it('금액이 상한을 넘으면 amount_mismatch + expect_mismatch 감사', async () => {
-    const { handlers, audit } = setup({ amountText: '152,000원' });
-    const sid = await begin(handlers, { maxAmount: 16000 });
-    const r = await handlers.click(caller, sid, ref);
-    if (r.ok) throw new Error('should fail');
-    expect(r.error.code).toBe('amount_mismatch');
-    expect(audit.records.some((x) => x.evt === 'expect_mismatch')).toBe(true);
-  });
-
-  it('금액 추출 실패는 amount_unavailable (fallback=deny)', async () => {
-    const { handlers } = setup({ amountText: null });
-    const sid = await begin(handlers, { maxAmount: 16000 });
-    const r = await handlers.click(caller, sid, ref);
-    if (r.ok) throw new Error('should fail');
-    expect(r.error.code).toBe('amount_unavailable');
-  });
-
-  it('버튼이 PG iframe 안에 있어도 셀렉터는 세션 origin 정책에서 온다 — 대조가 생략되지 않는다', async () => {
-    const { handlers } = setup({ frameOrigin: 'https://pay.pg.com', amountText: '152,000원' });
-    const sid = await begin(handlers, { maxAmount: 16000 });
-    const r = await handlers.click(caller, sid, ref);
-    if (r.ok) throw new Error('should fail');
-    expect(r.error.code).toBe('amount_mismatch');
-  });
-
-  it('expect가 없으면 대조 없이 클릭한다 — 승인은 예외 경로다', async () => {
-    const { handlers } = setup({ amountText: '999,999,999원' });
-    const sid = await begin(handlers);
-    expect((await handlers.click(caller, sid, ref)).ok).toBe(true);
   });
 });
 
@@ -486,7 +402,7 @@ describe('세션 TTL', () => {
     let t = 0;
     const vault = createVault(file, { cipher: fakeCipher, ttlMs: 1_000, now: () => t });
     const audit = createMemoryAudit();
-    const handlers = createHandlers({ vault, policy: POLICY, sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }), targets: new Map([['browser', fakeTarget().target]]), audit });
+    const handlers = createHandlers({ vault, sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }), targets: new Map([['browser', fakeTarget().target]]), audit });
     await handlers.sweep_expired();
     expect(audit.records.filter((x) => x.evt === 'vault_lock')).toHaveLength(0); // 처음부터 잠김 — 전이 아님
     await vault.unlock('pp');
@@ -552,7 +468,7 @@ describe('세션 = origin 하나 (FWL-017)', () => {
     const { target, closed } = fakeTarget();
     const audit = createMemoryAudit();
     const handlers = createHandlers({
-      vault: fakeVault(), policy: POLICY, sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }), targets: new Map([['browser', target]]), audit,
+      vault: fakeVault(), sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }), targets: new Map([['browser', target]]), audit,
     });
     const first = await handlers.session_begin(caller, { origin: 'https://shop.com' });
     if (!first.ok) throw new Error('first begin failed');
@@ -599,31 +515,29 @@ describe('세션 = origin 하나 (FWL-017)', () => {
     expect(audit.records.some((x) => x.evt === 'policy_denied' && x.rule === 'session_origin')).toBe(true);
   });
 
-  it('브라우저 엔진·모드는 정책의 origins.browser/headless에서 온다', async () => {
+  it('브라우저 엔진·모드는 호출자가 session_begin에서 고른다 (FWL-055)', async () => {
     const { target, opened } = fakeTarget();
     const handlers = createHandlers({
       vault: fakeVault(),
-      policy: parsePolicy('[origins."https://bot.example"]\nlabel="b"\nbrowser="chrome"\nheadless=false\n'),
       sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }),
       targets: new Map([['browser', target]]),
       audit: createMemoryAudit(),
     });
-    const r = await handlers.session_begin(caller, { origin: 'https://bot.example' });
+    const r = await handlers.session_begin(caller, { origin: 'https://bot.example', browser: 'chrome', headless: false });
     expect(r.ok).toBe(true);
     expect(opened[0]).toEqual({ origin: 'https://bot.example', kind: 'browser', browser: 'chrome', headless: false });
   });
 
-  it('origins.kind가 가리키는 타겟으로 라우팅된다 — 브라우저 타겟은 건드리지 않는다 (FWL-037)', async () => {
+  it('요청한 kind의 타겟으로 라우팅된다 — 브라우저 타겟은 건드리지 않는다 (FWL-037)', async () => {
     const browser = fakeTarget();
     const stub = fakeTarget({ url: 'https://stub.example/' });
     const handlers = createHandlers({
       vault: fakeVault(),
-      policy: parsePolicy('[origins."https://stub.example"]\nlabel="s"\nkind="stub"\n'),
       sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }),
       targets: new Map([['browser', browser.target], ['stub', stub.target]]),
       audit: createMemoryAudit(),
     });
-    const r = await handlers.session_begin(caller, { origin: 'https://stub.example' });
+    const r = await handlers.session_begin(caller, { origin: 'https://stub.example', kind: 'stub' });
     if (!r.ok) throw new Error(r.error.code);
     expect(stub.opened[0]).toEqual({ origin: 'https://stub.example', kind: 'stub' });
     expect(browser.opened).toHaveLength(0);
@@ -636,26 +550,29 @@ describe('세션 = origin 하나 (FWL-017)', () => {
     expect((await handlers.session_status(caller, sid)) as object).not.toHaveProperty('browser');
   });
 
-  it('정책이 등록되지 않은 kind를 가리키면 기동을 거부한다 (FWL-037)', () => {
+  it('등록되지 않은 kind로 session_begin하면 bad_request (FWL-037)', async () => {
+    const { handlers } = setup();
+    const r = await handlers.session_begin(caller, { origin: 'https://stub.example', kind: 'stub' });
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('bad_request');
+  });
+
+  it('browser 타겟이 없으면 기동을 거부한다', () => {
     expect(() => createHandlers({
       vault: fakeVault(),
-      policy: parsePolicy('[origins."https://stub.example"]\nlabel="s"\nkind="stub"\n'),
       sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }),
-      targets: new Map([['browser', fakeTarget().target]]),
+      targets: new Map(),
       audit: createMemoryAudit(),
-    })).toThrow(/kind "stub"/);
+    })).toThrow(/kind "browser"/);
   });
 });
 
 describe('저장 로그인 힌트 (FWL-046) — 서버는 주입 여부만 알리고 로그인 판단은 에이전트가 한다', () => {
-  const POLICY = parsePolicy('[origins."https://shop.com"]\nlabel="Shop"\n');
-
   function setup(over: FakeTargetOptions = {}) {
     const state = fakeTarget({ url: 'https://shop.com/', ...over });
     const audit = createMemoryAudit();
     const handlers = createHandlers({
       vault: fakeVault(),
-      policy: POLICY,
       sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }),
       targets: new Map([['browser', state.target]]),
       audit,

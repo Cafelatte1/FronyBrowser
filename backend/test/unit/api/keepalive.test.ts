@@ -6,7 +6,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createMemoryAudit, createSessionStore, parsePolicy } from '@wallet/core';
+import { createMemoryAudit, createSessionStore } from '@wallet/core';
 import { afterAll, describe, expect, it } from 'vitest';
 import { createHandlers } from '@wallet/api';
 import { runKeepaliveOnce, seededHosts } from '@wallet/api';
@@ -27,7 +27,7 @@ function setup(locked = false) {
   const audit = createMemoryAudit();
   const sessions = createSessionStore({ ttlMs: 60_000, maxConcurrent: 4 });
   const vault = fakeVault({ locked, passphrase: 'pp' });
-  const handlers = createHandlers({ vault, policy: parsePolicy(''), sessions, targets: new Map([['browser', target]]), audit });
+  const handlers = createHandlers({ vault, sessions, targets: new Map([['browser', target]]), audit });
   return { handlers, audit, sessions, vault, visited };
 }
 

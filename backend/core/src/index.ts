@@ -4,7 +4,7 @@ export * from './contract.js';
 export * from './ports.js';
 export * from './variants.js';
 export * from './scrubber.js';
-export * from './policy.js';
+export * from './duration.js';
 export * from './grant.js';
 export * from './vault.js';
 export * from './resolve.js';

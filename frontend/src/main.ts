@@ -133,7 +133,7 @@ for (const btn of document.querySelectorAll<HTMLButtonElement>('.btn-unlock')) {
 }
 
 // ── dry-run 토글 ─────────────────────────────────────────────
-// 켜져 있으면 결제 비밀번호(require_grant 키) fill이 grant 검증까지만 하고 입력하지 않는다.
+// 켜져 있으면 결제 비밀번호(grant 플래그 키) fill이 grant 검증까지만 하고 입력하지 않는다.
 // 실결제 없이 E2E를 돌리는 스위치 — 켜진 채 두면 실주행이 조용히 결제 없이 끝나므로 레일에 크게 띄운다
 
 function renderDryRun(on: boolean): void {

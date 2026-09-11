@@ -51,10 +51,8 @@ export type FakeTargetOptions = {
   readonly frameOrigin?: string;
   /** 스냅샷 트리 본문. 값이 되비치는 최악 케이스를 여기 넣어 egress를 시험한다 */
   readonly tree?: string;
-  /** extract()가 돌려줄 금액 텍스트. null이면 추출 실패 */
-  readonly amountText?: string | null;
-  /** matches()가 돌려줄 값 — require_selector 검사 결과. 기본 true */
-  readonly matches?: boolean;
+  /** extract()가 돌려줄 표시 텍스트. 기본 null (없는 셀렉터) */
+  readonly extractText?: string | null;
   /** open()이 돌려줄 storedLogin. 기본 false (저장 로그인 없음) */
   readonly storedLogin?: boolean;
   /** open()이 돌려줄 storedLogin. 기본 false (저장 로그인 없음) */
@@ -115,8 +113,7 @@ export function fakeTarget(opts: FakeTargetOptions = {}): FakeTarget {
       takeFailure();
       return { gen: 1, pages: 1, url, tree: opts.tree ?? '- textbox "휴대폰" [ref=1:e1]' } as SafeSnapshot;
     },
-    extract: async () => opts.amountText ?? null,
-    matches: async () => opts.matches ?? true,
+    extract: async () => opts.extractText ?? null,
     status: async () => ({ url, pages: [{ index: 0, url, current: true }], snapshotGen: 1 }),
     switchPage: async (_sid, index: number) => {
       takeFailure();

@@ -1,12 +1,12 @@
 /**
  * dry-run 런타임 토글 (FWL-035).
  *
- * 켜져 있으면 require_grant 키의 fill이 grant 검증·소모까지 평소대로 하고 실제 입력(타이핑·키패드
+ * 켜져 있으면 볼트에서 grant 플래그가 켜진 키의 fill이 grant 검증·소모까지 평소대로 하고 실제 입력(타이핑·키패드
  * 클릭)만 건너뛴다 — 실결제 없이 재구매 E2E를 돌리는 스위치다. 응답은 실제 fill과 같고 감사로그
  * `dry: true`에만 드러난다. 주행 중인 에이전트가 알 수 없어야 하므로 /health에 싣지 않는다.
  *
- * policy.toml이 아니라 런타임 설정인 이유: 정책은 기동 때 한 번 읽고, 테스트마다 재시작하는 건
- * 번거롭다 (2026-09-06 decided). 데이터 디렉터리의 JSON 파일에 영속돼 재시작을 넘긴다.
+ * 환경변수가 아니라 런타임 설정인 이유: 테스트마다 재시작하는 건 번거롭다 (2026-09-06 decided).
+ * 데이터 디렉터리의 JSON 파일에 영속돼 재시작을 넘긴다.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';

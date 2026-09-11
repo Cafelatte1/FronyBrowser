@@ -139,7 +139,7 @@ async function main(): Promise<void> {
   if (cmd === 'status') {
     // dry-run은 /health에 없다(에이전트가 읽는 경로). 서버 머신에서 데이터 디렉터리의 파일을 직접 읽는다 (FWL-035)
     if (readDryRunFlag(join(defaultDataDir(), 'dry-run.json'))) {
-      console.warn('★ DRY RUN 켜짐 — require_grant 키는 입력하지 않는다. 실주행 전에 관리 UI에서 끈다');
+      console.warn('★ DRY RUN 켜짐 — grant 키는 입력하지 않는다. 실주행 전에 관리 UI에서 끈다');
     } else {
       console.log('dry-run: off');
     }
