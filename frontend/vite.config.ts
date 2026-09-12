@@ -11,6 +11,7 @@ export default defineConfig({
       '/login': devServer,
       '/vault': devServer,
       '/health': devServer,
+      '/admin': devServer,
     },
   },
   build: { outDir: 'dist', emptyOutDir: true },

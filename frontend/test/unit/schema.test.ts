@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { EXTRA_KEY, SECTIONS, checkFields, groupOf, isSecretKey, type FieldDef } from '../../src/schema.js';
+import { CUSTOM_BLURB, EXTRA_KEY, SECTIONS, checkFields, groupOf, isSecretKey, type FieldDef } from '../../src/schema.js';
 import { fmtRemain } from '../../src/format.js';
 
 const VALUE_TYPES = new Set(['card', 'phone', 'rrn', 'email', 'name', 'address', 'text']);
@@ -20,6 +20,14 @@ describe('스키마 자체', () => {
   it('마스킹은 CVV·카드 비밀번호뿐이다', () => {
     const secret = SECTIONS.flatMap((s) => s.fields).filter((f) => f.secret).map((f) => f.key).sort();
     expect(secret).toEqual(['card.personal.cvv', 'card.personal.password2']);
+  });
+
+  it('설명 문구는 2026-09-11 디자인 문구다 — 서버 정책이 출처를 고른다는 말은 없다', () => {
+    const blurb = (id: string): string => SECTIONS.find((s) => s.id === id)!.blurb;
+    expect(blurb('card')).toBe("These go into the payment gateway's own frame, never the shop's page. CVV and the card password stay masked as you type.");
+    expect(blurb('personal')).toBe('Values leave this page only as a write. What comes back is a name, a type and a length — never the value, not to this page and not to an agent.');
+    expect(CUSTOM_BLURB).toBe('Keys you added yourself. A key marked grant is filled only when the calling service hands over a pay grant for the session.');
+    for (const text of [...SECTIONS.map((s) => s.blurb), CUSTOM_BLURB]) expect(text).not.toContain('policy');
   });
 
   it('기타 키 규칙은 범위.항목 / 범위.인스턴스.항목 두 형태만 통과시킨다', () => {

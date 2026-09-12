@@ -13,7 +13,11 @@ export type FieldDef = {
   grant?: boolean;
 };
 export type SectionDef = { id: string; title: string; blurb: string; fields: FieldDef[] };
-export type KeyInfo = { name: string; type: string; len: number; grant: boolean };
+export type KeyInfo = { name: string; type: string; len: number; grant: boolean; label: string };
+
+/** 스키마 밖 그룹(사용자가 만든 그룹)의 설명 — 패널 머리에 그대로 쓴다 */
+export const CUSTOM_BLURB =
+  'Keys you added yourself. A key marked grant is filled only when the calling service hands over a pay grant for the session.';
 
 export const DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 /**
@@ -26,7 +30,7 @@ export const SECTIONS: SectionDef[] = [
   {
     id: 'personal',
     title: 'Personal',
-    blurb: 'Values leave this page only as a write. What comes back is a name, a type and a length — never the value, not to this page and not to an agent. Leave anything you would rather not provide empty.',
+    blurb: 'Values leave this page only as a write. What comes back is a name, a type and a length — never the value, not to this page and not to an agent.',
     fields: [
       { key: 'profile.rrn', label: 'Resident reg. no.', type: 'rrn', hint: '000000-0000000', pattern: /^\d{6}-\d{7}$/ },
       { key: 'profile.phone', label: 'Mobile', type: 'phone', hint: '010-0000-0000', pattern: /^01\d-\d{3,4}-\d{4}$/ },
@@ -38,7 +42,7 @@ export const SECTIONS: SectionDef[] = [
   {
     id: 'card',
     title: 'Card',
-    blurb: "These four go into the payment gateway's own frame, not the shop's page. CVV and the card password are masked as you type; the rest stay plain so you can proofread them.",
+    blurb: "These go into the payment gateway's own frame, never the shop's page. CVV and the card password stay masked as you type.",
     fields: [
       { key: 'card.personal.number', label: 'Card number', type: 'card', hint: '0000-0000-0000-0000', pattern: /^\d{4}-\d{4}-\d{4}-\d{4}$/ },
       { key: 'card.personal.expiry', label: 'Expiry', type: 'text', hint: 'MM/YY', pattern: /^(0[1-9]|1[0-2])\/\d{2}$/ },
