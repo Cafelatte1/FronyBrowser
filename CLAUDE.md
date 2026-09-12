@@ -49,6 +49,7 @@ Why the code looks the way it does. The behaviour itself is in the code; these a
 - **Every vault key is exactly `group.subject.field`** (FWL-057). One key is one row on the console, and the segment count matching the screen is what makes that true. The server is the enforcement point, not the GUI.
 - **The server presses secure-keypad digits itself** (FWL-033). For image-button keypads the caller passes the selectors and the server clicks in PIN order. The grant is consumed only after the fill succeeds, so a failed attempt can be retried.
 - **Test Mode is a runtime switch, not a rule** (FWL-035, FWL-056). It rehearses a checkout without paying: every check on a grant-flagged key still runs, and then nothing is typed. The response is identical to a real fill on purpose — an agent that could tell would behave differently in rehearsal than in production.
+- **Authentication is delegated to FronyAuth entirely.** This service stores no credential and no token file: every bearer is resolved remotely on first use and cached briefly. Beyond that cache window an outage fails closed — nothing is accepted merely because verification could not be attempted. A failed reach returns `503`, never `401`, because `401` would read as "your key is wrong" and send the operator hunting the wrong thing.
 - **The data root follows the home-server Frony convention**, `%LOCALAPPDATA%\Frony\FronyBrowser\data`.
 
 ## Layout
@@ -81,7 +82,8 @@ Procedure: push the tag, then on the server run `scripts\deploy.ps1 -Tag vX.Y.Z`
 
 ## Docs
 
-`docs/` holds only what the code cannot answer — [operations.md](docs/operations.md) (running this machine: deploy, failures seen, backup and recovery), [auth.md](docs/auth.md) (the authentication contract with external clients) and [pay-grant.md](docs/pay-grant.md) (the token contract the issuing service has to match). The documents that described this codebase have been deleted, so read the code. Do not write new ones.
+`docs/` holds only what the code cannot answer — [operations.md](docs/operations.md) (running this machine: deploy, failures seen, backup and recovery) and [pay-grant.md](docs/pay-grant.md) (the token contract the issuing service has to match). The documents that described this codebase have been deleted, so read the code. Do not write new ones.
+Authentication is not documented here — FronyAuth (`project-auth`) owns it outright.
 
 ## FronyBoard
 

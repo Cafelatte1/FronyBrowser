@@ -42,7 +42,8 @@ npm run -w backend/api dev
 
 For a server other devices reach, run the normal mode: it verifies every bearer token
 through a FronyAuth introspection endpoint (`FRONY_SERVICE_KEY`, `FRONY_AUTH_URL`,
-`FRONY_AUTH_ISSUER`; the contract is in [docs/auth.md](docs/auth.md)).
+`FRONY_AUTH_ISSUER`). This service stores no credential of its own; FronyAuth issues,
+verifies and revokes every key, and owns that contract.
 
 Register it in an MCP client with a device key issued by FronyAuth:
 
@@ -74,6 +75,6 @@ not exist. Read it before adding one.
 ## Docs
 
 `docs/` holds only what the code cannot answer: [operations.md](docs/operations.md) (deploying and
-running the home server), [auth.md](docs/auth.md) (the authentication contract) and
-[pay-grant.md](docs/pay-grant.md) (the token contract the issuing service must match). For anything
-about this codebase, read the code.
+running the home server) and [pay-grant.md](docs/pay-grant.md) (the token contract the issuing
+service must match). For anything about this codebase, read the code. Authentication lives in
+FronyAuth, which owns both the implementation and its documentation.
