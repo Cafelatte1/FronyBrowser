@@ -392,26 +392,33 @@ async function toggleGrant(r: Row): Promise<void> {
     render();
     return;
   }
+  // 먼저 뒤집어 그리고 서버에는 뒤이어 보낸다 — 클릭이 왕복을 기다리지 않는다. 실패하면 되돌린다
+  const info = existing.get(r.key);
+  if (info === undefined) return;
+  existing.set(r.key, { ...info, grant: !r.grant });
+  render();
   try {
     const res = (await api('/vault/grant', { key: r.key, grant: !r.grant })) as { grant?: boolean };
     note(true, res.grant === true
       ? `${r.label} now needs a pay grant.`
       : `${r.label} no longer needs a pay grant.`);
-    await reload();
   } catch (e) {
+    existing.set(r.key, info);
+    render();
     note(false, `Could not change the grant flag: ${(e as Error).message}`);
   }
 }
 
 async function toggleHold(key: string): Promise<void> {
-  const next = new Set(held);
-  if (next.has(key)) next.delete(key); else next.add(key);
+  const before = new Set(held);
+  if (held.has(key)) held.delete(key); else held.add(key);
+  render();
   try {
-    const r = (await api('/admin/test-mode', { held: [...next] })) as { held?: string[] };
-    held.clear();
-    for (const k of r.held ?? []) held.add(k);
-    render();
+    await api('/admin/test-mode', { held: [...held] });
   } catch (e) {
+    held.clear();
+    for (const k of before) held.add(k);
+    render();
     note(false, `Could not change the held keys: ${(e as Error).message}`);
   }
 }

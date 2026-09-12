@@ -496,7 +496,8 @@ export function createHandlers(deps: HandlerDeps) {
 
     async vault_list(_caller: Caller): Promise<Result<VaultListResponse>> {
       try {
-        return { ok: true, keys: vault.list() };
+        // 길이는 싣지 않는다 — 값의 크기는 에이전트가 알 필요가 없고, 무차별 대입의 범위를 좁혀 준다 (FWL-058)
+        return { ok: true, keys: vault.list().map(({ name, type, grant, label }) => ({ name, type, grant, label })) };
       } catch (e) {
         return toFailure(e);
       }

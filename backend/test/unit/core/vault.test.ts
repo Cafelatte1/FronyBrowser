@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { fakeCipher } from '../../helpers/fakes.js';
+import type { VaultEntry } from '@wallet/core';
 import {
   createVault,
   defaultLabelFor,
@@ -46,8 +47,25 @@ describe('vault', () => {
     await vault.unlock('correct-horse');
     expect(vault.locked).toBe(false);
     expect(vault.get('phone')?.value).toBe('01012345678');
-    expect(vault.list()).toContainEqual({ name: 'card.number', type: 'card', grant: false, label: 'Card number' });
+    expect(vault.list()).toContainEqual({ name: 'card.number', type: 'card', len: 16, grant: false, label: 'Card number' });
     expect(vault.live().size).toBe(2);
+  });
+
+  it('applyWrite — 열려 있으면 방금 쓴 항목으로 메모리를 갈아끼운다. 잠긴 금고는 열지 않는다 (FWL-058)', async () => {
+    const vault = createVault(seed('applywrite.dpapi'), { cipher: fakeCipher });
+    const written: Map<string, VaultEntry> = new Map([
+      ['phone', { type: 'phone', value: '01099998888', grant: true, label: 'Mobile' }],
+    ]);
+
+    vault.applyWrite(written);
+    expect(vault.locked).toBe(true);
+    expect(() => vault.list()).toThrow(VaultLockedError);
+
+    await vault.unlock('correct-horse');
+    vault.applyWrite(written);
+    expect(vault.list()).toEqual([{ name: 'phone', type: 'phone', len: 11, grant: true, label: 'Mobile' }]);
+    expect(vault.get('phone')?.value).toBe('01099998888');
+    expect(vault.currentPassphrase()).toBe('correct-horse');
   });
 
   it('틀린 패스프레이즈는 unlock 실패, 잠김 유지', async () => {
@@ -129,7 +147,7 @@ describe('vault', () => {
     writeFileSync(old, fakeCipher.protect(Buffer.from('{"phone":{"type":"phone","value":"01012345678"}}', 'utf8'), entropy));
     const vault = createVault(old, { cipher: fakeCipher });
     await vault.unlock('pp');
-    expect(vault.list()).toEqual([{ name: 'phone', type: 'phone', grant: false, label: '' }]);
+    expect(vault.list()).toEqual([{ name: 'phone', type: 'phone', len: 11, grant: false, label: '' }]);
   });
 
   it('overview — 파일이 없으면 빈 목록', () => {
@@ -172,7 +190,7 @@ describe('라벨 (FWL-056)', () => {
     const before = readFileSync(path);
     const vault = createVault(path, { cipher: fakeCipher });
     await vault.unlock('pp');
-    expect(vault.list()).toEqual([{ name: 'phone', type: 'phone', grant: false, label: '' }]);
+    expect(vault.list()).toEqual([{ name: 'phone', type: 'phone', len: 11, grant: false, label: '' }]);
     expect(readFileSync(path).equals(before)).toBe(true);
   });
 
@@ -197,7 +215,8 @@ describe('라벨 (FWL-056)', () => {
 
     const backupsAfterFirst = readdirSync(dir).filter((f) => f.startsWith('seed.dpapi.bak-'));
     const second = seedLabels(path, 'pp', fakeCipher);
-    expect(second).toEqual({ backup: '', seeded: [] });
+    expect(second.backup).toBe('');
+    expect(second.seeded).toEqual([]);
     expect(readdirSync(dir).filter((f) => f.startsWith('seed.dpapi.bak-'))).toEqual(backupsAfterFirst);
   });
 });

@@ -9,7 +9,7 @@
 import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Audit, Cipher, Result, Vault, VaultEntry, ValueType } from '@wallet/core';
-import { defaultLabelFor, fail, overviewVaultFile, readVaultFile, removeVaultEntry, seedLabels, setVaultEntries, writeVaultFile } from '@wallet/core';
+import { VaultLockedError, defaultLabelFor, fail, overviewVaultFile, readVaultFile, seedLabels, writeVaultFile } from '@wallet/core';
 import type { Caller } from './impl.js';
 
 const KEY_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -52,9 +52,12 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
     });
   }
 
-  async function refresh(passphrase: string): Promise<void> {
-    // 잠긴 금고를 등록 부수효과로 열지 않는다 — 이미 열려 있을 때만 다시 읽는다
-    if (!vault.locked) await vault.unlock(passphrase);
+  /** 열려 있으면 메모리에서 — DPAPI 호출 하나가 PowerShell 프로세스 하나다 (FWL-058) */
+  function entriesNow(passphrase: string): Map<string, VaultEntry> {
+    if (vault.locked) return readVaultFile(vaultFile, passphrase, cipher);
+    // 열린 금고에 다른 패스프레이즈로 쓰면 파일이 그 암호로 통째로 재암호화된다 — 쓰기 전에 막는다
+    if (vault.currentPassphrase() !== passphrase) throw new VaultLockedError();
+    return new Map(vault.live());
   }
 
   return {
@@ -91,13 +94,14 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
       }
       const entries: Array<readonly [string, VaultEntry]> = [];
       try {
-        // 이미 붙어 있는 이름을 지우지 않으려면 현재 파일을 먼저 읽어야 한다
-        const existing = existsSync(vaultFile) ? readVaultFile(vaultFile, passphrase, cipher) : new Map<string, VaultEntry>();
+        // 이미 붙어 있는 이름을 지우지 않으려면 현재 항목을 먼저 읽어야 한다
+        const existing = existsSync(vaultFile) ? entriesNow(passphrase) : new Map<string, VaultEntry>();
         for (const { key, type, value, grant, label } of items) {
           entries.push([key, { type: type as ValueType, value, grant: grant === true, label: labelOf(existing, key, label) }]);
         }
-        setVaultEntries(vaultFile, passphrase, entries, cipher);
-        await refresh(passphrase);
+        for (const [key, entry] of entries) existing.set(key, entry);
+        writeVaultFile(vaultFile, passphrase, existing, cipher);
+        vault.applyWrite(existing);
       } catch {
         // 패스프레이즈 오류·계정 불일치를 구분해 주지 않는다
         for (const { key } of items) log(caller, 'vault_set', key, false);
@@ -110,12 +114,12 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
     /** 값을 다시 받지 않고 grant 플래그만 바꾼다 (FWL-056). 없는 키는 key_not_found */
     async grant(caller: Caller, passphrase: string, key: string, grant: boolean): Promise<Result<{ key: string; grant: boolean }>> {
       try {
-        const entries = readVaultFile(vaultFile, passphrase, cipher);
+        const entries = entriesNow(passphrase);
         const current = entries.get(key);
         if (current === undefined) return fail('key_not_found', 'not in vault');
         entries.set(key, { ...current, grant });
         writeVaultFile(vaultFile, passphrase, entries, cipher);
-        await refresh(passphrase);
+        vault.applyWrite(entries);
       } catch {
         log(caller, 'vault_set', key, false);
         return fail('vault_locked', 'wrong passphrase or account mismatch');
@@ -129,7 +133,7 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
       let result: ReturnType<typeof seedLabels>;
       try {
         result = seedLabels(vaultFile, passphrase, cipher);
-        await refresh(passphrase);
+        vault.applyWrite(result.entries);
       } catch {
         return fail('vault_locked', 'wrong passphrase or account mismatch');
       }
@@ -170,8 +174,12 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
     async rm(caller: Caller, passphrase: string, key: string): Promise<Result<{ key: string }>> {
       let removed: boolean;
       try {
-        removed = removeVaultEntry(vaultFile, passphrase, key, cipher);
-        await refresh(passphrase);
+        const entries = entriesNow(passphrase);
+        removed = entries.delete(key);
+        if (removed) {
+          writeVaultFile(vaultFile, passphrase, entries, cipher);
+          vault.applyWrite(entries);
+        }
       } catch {
         log(caller, 'vault_rm', key, false);
         return fail('vault_locked', 'wrong passphrase or account mismatch');
@@ -186,7 +194,8 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
       passphrase: string,
     ): Promise<Result<{ keys: Array<{ name: string; type: ValueType; len: number; grant: boolean; label: string }> }>> {
       try {
-        return { ok: true, keys: overviewVaultFile(vaultFile, passphrase, cipher) };
+        // 열려 있으면 메모리에서 — 목록을 보려고 파일을 다시 복호화하지 않는다 (FWL-058)
+        return { ok: true, keys: vault.locked ? overviewVaultFile(vaultFile, passphrase, cipher) : [...vault.list()] };
       } catch {
         return fail('vault_locked', 'wrong passphrase or account mismatch');
       }

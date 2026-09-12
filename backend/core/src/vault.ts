@@ -39,8 +39,14 @@ export interface Vault {
   /** `until`이 있으면 만료를 그 시각으로 복원한다 — 단 now+TTL을 넘기지 않는다 (인계용, FWL-042) */
   unlock(passphrase: string, opts?: { readonly until?: number }): Promise<void>;
   lock(): void;
-  /** 키 이름과 타입만. 값은 나가지 않는다 */
-  list(): ReadonlyArray<{ name: string; type: ValueType; grant: boolean; label: string }>;
+  /** 키 이름과 타입만. 값은 나가지 않는다 (len은 길이지 값이 아니다) */
+  list(): ReadonlyArray<{ name: string; type: ValueType; len: number; grant: boolean; label: string }>;
+  /**
+   * 파일에 이미 쓴 항목을 메모리에도 반영한다 (FWL-058). 파일을 다시 복호화하지 않으려고 존재한다 —
+   * 쓰기가 성공한 직후에만 부르고, 잠겨 있으면 아무 일도 하지 않는다.
+   * 여기서 새 값이 들어오지는 않는다: 호출자가 방금 쓴 그대로를 넘긴다.
+   */
+  applyWrite(entries: ReadonlyMap<string, VaultEntry>): void;
   get(key: string): VaultEntry | undefined;
   /** 스크러버가 매칭에 쓸 현재 살아 있는 값들 */
   live(): ReadonlyMap<string, VaultEntry>;
@@ -221,16 +227,17 @@ function backupStamp(at: Date): string {
 /**
  * 라벨이 비어 있는 항목에 이름을 지어 넣는다 (FWL-056). 볼트를 열 때마다 자동으로 하지 않는다 —
  * 운영자가 부를 때 한 번만, 그것도 기존 파일을 백업한 뒤에 쓴다.
- * 반환은 채운 키와 그 이름뿐이다. 값은 실리지 않는다 (규칙 5).
+ * 반환은 채운 키와 그 이름, 그리고 방금 쓴 항목들이다 — entries는 호출자가 메모리에 반영하려고
+ * 쓴다 (Vault.applyWrite, FWL-058). 응답에 실리는 것은 seeded뿐이다. 값은 실리지 않는다 (규칙 5).
  */
 export function seedLabels(
   path: string,
   passphrase: string,
   cipher: Cipher = dpapi,
-): { readonly backup: string; readonly seeded: ReadonlyArray<{ key: string; label: string }> } {
+): { readonly backup: string; readonly seeded: ReadonlyArray<{ key: string; label: string }>; readonly entries: ReadonlyMap<string, VaultEntry> } {
   const entries = readVaultFile(path, passphrase, cipher);
   const empty = [...entries].filter(([, e]) => e.label === '');
-  if (empty.length === 0) return { backup: '', seeded: [] };
+  if (empty.length === 0) return { backup: '', seeded: [], entries };
 
   // 쓰기 전에 원본을 복사해 둔다 — 이름을 잘못 지어도 되돌릴 수 있어야 한다
   const backup = `${path}.bak-${backupStamp(new Date())}`;
@@ -242,7 +249,7 @@ export function seedLabels(
     return { key, label };
   });
   writeVaultFile(path, passphrase, entries, cipher);
-  return { backup, seeded };
+  return { backup, seeded, entries };
 }
 
 /** FWL-057: 두 조각이던 옛 이름 → `그룹.대상.항목`. 값·grant·label은 그대로 옮긴다 */
@@ -345,7 +352,12 @@ export function createVault(path: string, opts: VaultOptions = {}): Vault {
       return this.locked ? 0 : unlockedUntil - now();
     },
     list() {
-      return [...ensureUnlocked()].map(([name, e]) => ({ name, type: e.type, grant: e.grant, label: e.label }));
+      return [...ensureUnlocked()].map(([name, e]) => ({ name, type: e.type, len: e.value.length, grant: e.grant, label: e.label }));
+    },
+    applyWrite(next: ReadonlyMap<string, VaultEntry>) {
+      // 잠긴 금고를 쓰기 부수효과로 열지 않는다 — TTL도 패스프레이즈도 건드리지 않는다
+      if (this.locked) return;
+      entries = new Map(next);
     },
     get(key: string) {
       return ensureUnlocked().get(key);

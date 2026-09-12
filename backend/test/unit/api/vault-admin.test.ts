@@ -3,7 +3,7 @@
  * DPAPI는 가짜 cipher로 대체한다.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -73,5 +73,38 @@ describe('reset — 마스터 비밀번호 분실용', () => {
 
     // 이미 아무것도 없는 상태에서 한 번 더 불러도 성공이다
     expect(await admin.reset(caller)).toEqual({ ok: true });
+  });
+});
+
+describe('열린 금고 — 파일을 다시 복호화하지 않는다 (FWL-058)', () => {
+  it('grant는 틀린 패스프레이즈면 파일을 그대로 두고 실패한다', async () => {
+    const { admin, vault, vaultFile } = setup('grant-wrong-pp');
+    expect((await admin.set(caller, 'pp', 'shop.payment.pinnumber', 'text', '1234')).ok).toBe(true);
+    await vault.unlock('pp');
+    const before = readFileSync(vaultFile);
+
+    const r = await admin.grant(caller, 'other', 'shop.payment.pinnumber', true);
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('vault_locked');
+    // 다른 패스프레이즈로 재암호화되지 않았다 — 바이트도 플래그도 그대로다
+    expect(readFileSync(vaultFile).equals(before)).toBe(true);
+    expect(overviewVaultFile(vaultFile, 'pp', fakeCipher)).toEqual([
+      { name: 'shop.payment.pinnumber', type: 'text', len: 4, grant: false, label: 'Payment PIN' },
+    ]);
+  });
+
+  it('overview는 열려 있어도 파일과 같은 줄을 돌려준다', async () => {
+    const { admin, vault, vaultFile } = setup('overview-open');
+    expect((await admin.set(caller, 'pp', 'card.personal.number', 'card', '1111222233334444', true)).ok).toBe(true);
+    expect((await admin.set(caller, 'pp', 'profile.personal.phone', 'phone', '01012345678')).ok).toBe(true);
+    await vault.unlock('pp');
+
+    const r = await admin.overview(caller, 'pp');
+    if (!r.ok) throw new Error('should succeed');
+    expect(r.keys).toEqual([
+      { name: 'card.personal.number', type: 'card', len: 16, grant: true, label: 'Card number' },
+      { name: 'profile.personal.phone', type: 'phone', len: 11, grant: false, label: 'Mobile' },
+    ]);
+    expect(r.keys).toEqual(overviewVaultFile(vaultFile, 'pp', fakeCipher));
   });
 });
