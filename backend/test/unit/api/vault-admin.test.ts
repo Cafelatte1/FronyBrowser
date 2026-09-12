@@ -108,3 +108,30 @@ describe('열린 금고 — 파일을 다시 복호화하지 않는다 (FWL-058)
     expect(r.keys).toEqual(overviewVaultFile(vaultFile, 'pp', fakeCipher));
   });
 });
+
+describe('rmGroup — 그룹 하나를 통째로 지운다', () => {
+  it('첫 조각이 같은 키만 사라지고 나머지는 그대로다. 빈 그룹은 key_not_found', async () => {
+    const { admin, vaultFile } = setup('rm-group');
+    expect((await admin.set(caller, 'pp', 'kurly.login.id', 'text', 'me@example.com')).ok).toBe(true);
+    expect((await admin.set(caller, 'pp', 'kurly.payment.pin', 'text', '1234', true)).ok).toBe(true);
+    expect((await admin.set(caller, 'pp', 'card.personal.number', 'card', '1111222233334444')).ok).toBe(true);
+
+    const r = await admin.rmGroup(caller, 'pp', 'kurly');
+    if (!r.ok) throw new Error('should succeed');
+    expect(r.removed).toEqual(['kurly.login.id', 'kurly.payment.pin']);
+    expect(overviewVaultFile(vaultFile, 'pp', fakeCipher).map((k) => k.name)).toEqual(['card.personal.number']);
+
+    const again = await admin.rmGroup(caller, 'pp', 'kurly');
+    if (again.ok) throw new Error('should fail');
+    expect(again.error.code).toBe('key_not_found');
+  });
+
+  it('첫 조각이 접두사로만 겹치는 그룹은 건드리지 않는다', async () => {
+    const { admin, vaultFile } = setup('rm-group-prefix');
+    expect((await admin.set(caller, 'pp', 'shop.login.id', 'text', 'a')).ok).toBe(true);
+    expect((await admin.set(caller, 'pp', 'shopping.login.id', 'text', 'b')).ok).toBe(true);
+
+    expect((await admin.rmGroup(caller, 'pp', 'shop')).ok).toBe(true);
+    expect(overviewVaultFile(vaultFile, 'pp', fakeCipher).map((k) => k.name)).toEqual(['shopping.login.id']);
+  });
+});

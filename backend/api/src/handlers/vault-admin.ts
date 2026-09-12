@@ -189,6 +189,26 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
       return { ok: true, key };
     },
 
+    /** 그룹 하나를 통째로 지운다 (FWL-056) — 이름의 첫 조각이 group인 키 전부. 복호화·재암호화는 한 번 */
+    async rmGroup(caller: Caller, passphrase: string, group: string): Promise<Result<{ group: string; removed: string[] }>> {
+      let removed: string[];
+      try {
+        const entries = entriesNow(passphrase);
+        removed = [...entries.keys()].filter((k) => k.split('.')[0] === group);
+        if (removed.length > 0) {
+          for (const key of removed) entries.delete(key);
+          writeVaultFile(vaultFile, passphrase, entries, cipher);
+          vault.applyWrite(entries);
+        }
+      } catch {
+        log(caller, 'vault_rm', null, false);
+        return fail('vault_locked', 'wrong passphrase or account mismatch');
+      }
+      if (removed.length === 0) return fail('key_not_found', 'no keys in that group');
+      for (const key of removed) log(caller, 'vault_rm', key, true);
+      return { ok: true, group, removed };
+    },
+
     async overview(
       _caller: Caller,
       passphrase: string,

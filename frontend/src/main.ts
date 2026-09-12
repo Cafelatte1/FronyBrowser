@@ -365,6 +365,8 @@ function renderContent(): void {
   $('unnamed').hidden = unnamed === 0;
   $('unnamed-text').textContent = `${unnamed} ${unnamed === 1 ? 'key has' : 'keys have'} no name yet.`;
 
+  // 그룹 통째로 지우기는 스키마 밖 그룹에만 — 스키마 그룹은 줄마다 Delete로 지운다
+  $('btn-del-group').hidden = section !== undefined || vault !== 'open';
   $('add-area').hidden = section !== undefined;
   $('add-full').textContent = `${current}.${$<HTMLInputElement>('add-field').value.trim() || 'login.id'}`;
 
@@ -444,6 +446,28 @@ $('btn-add-discard').addEventListener('click', () => {
 });
 $('add-field').addEventListener('input', () => {
   $('add-full').textContent = `${current}.${$<HTMLInputElement>('add-field').value.trim() || 'login.id'}`;
+});
+
+$('btn-del-group').addEventListener('click', () => {
+  void (async () => {
+    const group = current;
+    const stored = [...existing.keys()].filter((k) => !SCHEMA_KEYS.has(k) && groupOf(k) === group);
+    const what = stored.length === 0
+      ? `Delete the group ${group}?`
+      : `Delete ${group} and the ${stored.length} ${stored.length === 1 ? 'value' : 'values'} stored under it? The values are gone for good.`;
+    if (!confirm(what)) return;
+    try {
+      if (stored.length > 0) await api('/vault/rm-group', { group });
+      newGroups.delete(group);
+      pendingRows.delete(group);
+      for (const k of stored) draft.delete(k);
+      select(SECTIONS[0]!.id);
+      note(true, `Deleted ${group}.`);
+      await reload();
+    } catch (e) {
+      note(false, `Delete failed: ${(e as Error).message}`);
+    }
+  })();
 });
 
 $('btn-add-key').addEventListener('click', () => {
