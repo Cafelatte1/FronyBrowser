@@ -38,7 +38,7 @@ describe('unlock 인계 파일', () => {
 
   it('vault.unlock(until)은 인계된 만료를 쓰되 now+TTL을 넘기지 않고, 이미 지난 만료는 거부한다', async () => {
     const vaultFile = join(dir, 'vault.dpapi');
-    writeVaultFile(vaultFile, 'pp', new Map([['phone', { type: 'phone', value: '01012345678', grant: false }]]), fakeCipher);
+    writeVaultFile(vaultFile, 'pp', new Map([['phone', { type: 'phone', value: '01012345678', grant: false, label: 'Mobile' }]]), fakeCipher);
     let t = T0;
     const v = createVault(vaultFile, { cipher: fakeCipher, ttlMs: 60_000, now: () => t });
     await v.unlock('pp', { until: T0 + 20_000 });

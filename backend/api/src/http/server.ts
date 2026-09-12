@@ -2,10 +2,11 @@
  * HTTP 서버. 소비자 입구는 /mcp 하나이고 나머지는 내부 경로다:
  *   POST /mcp            — MCP streamable-http (기기 키 인증)
  *   POST /login          — 등록 페이지 로그인 (FronyAuth /admin/verify 위임 → wsess_ 발급)
- *   POST /vault/unlock·set·rm·list — admin 전용 (wsess_ 또는 admin 기기 키). 값은 응답에 없다
+ *   POST /vault/unlock·set·rm·list·grant·seed-labels·create — admin 전용 (wsess_ 또는 admin 기기 키). 값은 응답에 없다
+ *   POST /vault/reset    — 등록 페이지 세션(wsess_) 전용. 패스프레이즈를 받지 않는다 (마스터 비밀번호 분실용, FWL-056)
  *   POST /vault/handoff  — admin, 또는 서버 자신의 서비스 키(같은 머신의 배포 스크립트). 인계 파일만 쓴다 (FWL-042)
- *   GET/POST /admin/dry-run — 등록 페이지 세션(wsess_) 전용. 기기 키는 admin이라도 403 (FWL-035)
- *   GET  /health         — 무인증. dry-run 상태는 싣지 않는다 — 에이전트가 읽는다
+ *   GET/POST /admin/test-mode — 등록 페이지 세션(wsess_) 전용. 기기 키는 admin이라도 403 (FWL-035)
+ *   GET  /health         — 무인증. Test Mode 상태는 싣지 않는다 — 에이전트가 읽는다
  *   GET  /.well-known/oauth-protected-resource/mcp — 무인증, publicUrl이 있을 때만 (RFC 9728, claude.ai 커넥터용, FWL-040)
  *   GET  /*              — frontend/dist 정적 서빙 (등록 페이지)
  *
@@ -17,7 +18,7 @@ import { createServer } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import type { Audit, DryRun, Result, Vault } from '@wallet/core';
+import type { Audit, Result, TestMode, Vault } from '@wallet/core';
 import type { AdminVerifier } from '../auth-admin.js';
 import type { Verifier } from '../auth.js';
 import type { Caller, Handlers } from '../handlers/impl.js';
@@ -46,8 +47,10 @@ export type HttpDeps = {
   /** 금고 파일 경로 — /health의 vaultExists용 (없으면 첫 저장 전이다) */
   readonly vaultFile?: string;
   readonly guiSessions?: GuiSessions;
-  /** dry-run 토글 (FWL-035). 없으면 /admin/dry-run은 404 */
-  readonly dryRun?: DryRun;
+  /** Test Mode 토글 (FWL-035). 없으면 /admin/test-mode는 404 */
+  readonly testMode?: TestMode;
+  /** 설정된 unlock TTL 상한 (FWL-056) — /health가 알린다. 남은 시간(vaultTtlMs)과 달리 설정값이다 */
+  readonly unlockTtlMs?: number;
   /**
    * 이 서버 자신의 FronyAuth 서비스 키 (env FRONY_SERVICE_KEY). `/vault/handoff` 하나에서만 호출자로 인정한다 —
    * 같은 머신의 배포 스크립트가 재시작 직전에 부르는 용도다 (FWL-042). 다른 vault 라우트는 여전히 admin 전용이라
@@ -179,6 +182,7 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
       vaultLocked: deps.vault.locked,
       vaultExists: deps.vaultFile === undefined ? true : existsSync(deps.vaultFile),
       vaultTtlMs: deps.vault.remainingMs(),
+      vaultTtlMaxMs: deps.unlockTtlMs ?? null,
       local: deps.local === true,
     });
     return;
@@ -243,30 +247,29 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
     return;
   }
 
-  // dry-run 토글 — 사람이 관리 UI에서만 켜고 끈다. 기기 키(admin 포함)는 거부: 에이전트 경로에서
+  // Test Mode 토글 — 사람이 관리 UI에서만 켜고 끈다. 기기 키(admin 포함)는 거부: 에이전트 경로에서
   // 결제를 조용히 빼는 스위치를 만질 수 없어야 한다. /health에도 싣지 않는다 (FWL-035)
-  if (url.pathname === '/admin/dry-run' && deps.dryRun !== undefined) {
-    const bearer = bearerOf(req);
-    const username = bearer?.startsWith('wsess_') ? gui.check(bearer) : null;
-    if (!username) {
-      json(res, bearer?.startsWith('wsess_') || !bearer ? 401 : 403, {
-        ok: false, error: { code: 'unauthorized', message: 'admin session only', retriable: false },
-      });
-      return;
-    }
+  if (url.pathname === '/admin/test-mode' && deps.testMode !== undefined) {
+    const username = requireGuiSession(gui, req, res);
+    if (!username) return;
     if (req.method === 'GET') {
-      json(res, 200, { ok: true, on: deps.dryRun.get() });
+      json(res, 200, { ok: true, on: deps.testMode.get(), held: deps.testMode.held() });
       return;
     }
     if (req.method === 'POST') {
-      const body = (await readBody(req)) as { on?: unknown } | undefined;
-      if (typeof body?.on !== 'boolean') {
-        json(res, 400, { ok: false, error: { code: 'bad_request', message: 'on: boolean required', retriable: false } });
+      const body = (await readBody(req)) as { on?: unknown; held?: unknown } | undefined;
+      const badOn = body?.on !== undefined && typeof body.on !== 'boolean';
+      const badHeld = body?.held !== undefined && !(Array.isArray(body.held) && body.held.every((k) => typeof k === 'string'));
+      if (badOn || badHeld) {
+        json(res, 400, { ok: false, error: { code: 'bad_request', message: 'on: boolean, held: string[]', retriable: false } });
         return;
       }
-      deps.dryRun.set(body.on);
-      deps.audit.append({ evt: 'dry_run_set', sid: null, client: `admin:${username}`, traceId: null, origin: null, on: body.on });
-      json(res, 200, { ok: true, on: body.on });
+      if (typeof body?.on === 'boolean') deps.testMode.set(body.on);
+      if (Array.isArray(body?.held)) deps.testMode.setHeld(body.held as string[]);
+      const on = deps.testMode.get();
+      const held = deps.testMode.held();
+      deps.audit.append({ evt: 'dry_run_set', sid: null, client: `admin:${username}`, traceId: null, origin: null, on, held });
+      json(res, 200, { ok: true, on, held });
       return;
     }
   }
@@ -281,11 +284,21 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
     return;
   }
 
+  // 마스터 비밀번호 분실용 초기화 (FWL-056). 패스프레이즈를 받지 않으므로 아래 블록보다 먼저 처리한다 —
+  // 기기 키로는 부를 수 없고 관리 UI 세션 전용이다
+  if (req.method === 'POST' && url.pathname === '/vault/reset') {
+    const username = requireGuiSession(gui, req, res);
+    if (!username) return;
+    const result = await deps.vaultAdmin.reset({ client: `admin:${username}` });
+    jsonScrubbed(deps, 'vault_reset', res, adminStatus(result), result);
+    return;
+  }
+
   if (req.method === 'POST' && url.pathname.startsWith('/vault/')) {
     const caller = await requireAdmin(deps, gui, req, res);
     if (!caller) return;
     const body = (await readBody(req)) as
-      | { passphrase?: string; key?: string; type?: string; value?: string; grant?: unknown }
+      | { passphrase?: string; key?: string; type?: string; value?: string; grant?: unknown; label?: unknown }
       | undefined;
     if (typeof body?.passphrase !== 'string') {
       json(res, 400, { ok: false, error: { code: 'bad_request', message: 'passphrase required', retriable: false } });
@@ -302,16 +315,26 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
       jsonScrubbed(deps, 'vault_list', res, adminStatus(result), result);
       return;
     }
+    if (url.pathname === '/vault/create') {
+      const result = await deps.vaultAdmin.create(caller, body.passphrase);
+      jsonScrubbed(deps, 'vault_create', res, adminStatus(result), result);
+      return;
+    }
+    if (url.pathname === '/vault/seed-labels') {
+      const result = await deps.vaultAdmin.seedLabels(caller, body.passphrase);
+      jsonScrubbed(deps, 'vault_seed_labels', res, adminStatus(result), result);
+      return;
+    }
     if (url.pathname === '/vault/set') {
       // entries[]가 있으면 일괄 저장 (복호화·재암호화 한 번) — GUI의 "입력한 항목 저장"
       const entries = (body as { entries?: unknown }).entries;
       if (Array.isArray(entries)) {
-        const okShape = entries.every((e) => e && typeof e === 'object' && typeof (e as { key?: unknown }).key === 'string' && typeof (e as { type?: unknown }).type === 'string' && typeof (e as { value?: unknown }).value === 'string' && ((e as { grant?: unknown }).grant === undefined || typeof (e as { grant?: unknown }).grant === 'boolean'));
+        const okShape = entries.every((e) => e && typeof e === 'object' && typeof (e as { key?: unknown }).key === 'string' && typeof (e as { type?: unknown }).type === 'string' && typeof (e as { value?: unknown }).value === 'string' && ((e as { grant?: unknown }).grant === undefined || typeof (e as { grant?: unknown }).grant === 'boolean') && ((e as { label?: unknown }).label === undefined || typeof (e as { label?: unknown }).label === 'string'));
         if (!okShape) {
-          json(res, 400, { ok: false, error: { code: 'bad_request', message: 'entries: [{ key, type, value, grant? }]', retriable: false } });
+          json(res, 400, { ok: false, error: { code: 'bad_request', message: 'entries: [{ key, type, value, grant?, label? }]', retriable: false } });
           return;
         }
-        const result = await deps.vaultAdmin.setMany(caller, body.passphrase, entries as Array<{ key: string; type: string; value: string; grant?: boolean }>);
+        const result = await deps.vaultAdmin.setMany(caller, body.passphrase, entries as Array<{ key: string; type: string; value: string; grant?: boolean; label?: string }>);
         jsonScrubbed(deps, 'vault_set', res, adminStatus(result), result);
         return;
       }
@@ -319,7 +342,7 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
         json(res, 400, { ok: false, error: { code: 'bad_request', message: 'key/type/value required', retriable: false } });
         return;
       }
-      const result = await deps.vaultAdmin.set(caller, body.passphrase, body.key, body.type, body.value, typeof body.grant === 'boolean' ? body.grant : false);
+      const result = await deps.vaultAdmin.set(caller, body.passphrase, body.key, body.type, body.value, typeof body.grant === 'boolean' ? body.grant : false, typeof body.label === 'string' ? body.label : undefined);
       jsonScrubbed(deps, 'vault_set', res, adminStatus(result), result);
       return;
     }
@@ -332,12 +355,34 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
       jsonScrubbed(deps, 'vault_rm', res, adminStatus(result), result);
       return;
     }
+    if (url.pathname === '/vault/grant') {
+      if (typeof body.key !== 'string' || typeof body.grant !== 'boolean') {
+        json(res, 400, { ok: false, error: { code: 'bad_request', message: 'key/grant required', retriable: false } });
+        return;
+      }
+      const result = await deps.vaultAdmin.grant(caller, body.passphrase, body.key, body.grant);
+      jsonScrubbed(deps, 'vault_set', res, adminStatus(result), result);
+      return;
+    }
   }
 
   // 나머지 GET은 등록 페이지 정적 파일 — 비밀은 없고, 조작 API가 인증을 요구한다
   if (req.method === 'GET' && serveStatic(deps.staticDir, url.pathname, res)) return;
 
   json(res, 404, { ok: false, error: { code: 'timeout', message: 'not found', retriable: false } });
+}
+
+/** 관리 UI 세션(wsess_) 전용 — 기기 키는 admin이라도 거부한다 (FWL-035/056) */
+function requireGuiSession(gui: GuiSessions, req: IncomingMessage, res: ServerResponse): string | null {
+  const bearer = bearerOf(req);
+  const username = bearer?.startsWith('wsess_') ? gui.check(bearer) : null;
+  if (!username) {
+    json(res, bearer?.startsWith('wsess_') || !bearer ? 401 : 403, {
+      ok: false, error: { code: 'unauthorized', message: 'admin session only', retriable: false },
+    });
+    return null;
+  }
+  return username;
 }
 
 /** vault 라우트 인증: 등록 페이지 세션(wsess_) 우선, 아니면 admin 기기 키 */
@@ -378,6 +423,7 @@ function adminStatus(result: { ok: boolean; error?: { code: string } }): number 
   if (result.ok) return 200;
   if (result.error?.code === 'bad_request') return 400;
   if (result.error?.code === 'key_not_found') return 404;
+  if (result.error?.code === 'already_exists') return 409;
   return 403;
 }
 

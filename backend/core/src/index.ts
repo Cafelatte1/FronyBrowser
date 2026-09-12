@@ -11,7 +11,7 @@ export * from './resolve.js';
 export * from './session.js';
 export * from './approval.js';
 export * from './audit.js';
-export * from './dryrun.js';
+export * from './test-mode.js';
 export * from './unlock-handoff.js';
 export * from './keypad-sprite.js';
 export * from './keypad-glyphs.js';

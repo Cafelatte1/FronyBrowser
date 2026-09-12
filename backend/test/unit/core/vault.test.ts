@@ -4,15 +4,17 @@
  */
 
 import { createHash } from 'node:crypto';
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { fakeCipher } from '../../helpers/fakes.js';
 import {
   createVault,
+  defaultLabelFor,
   overviewVaultFile,
   removeVaultEntry,
+  seedLabels,
   setVaultEntry,
   VaultLockedError,
   writeVaultFile,
@@ -28,8 +30,8 @@ function seed(name: string): string {
     path,
     'correct-horse',
     new Map([
-      ['phone', { type: 'phone', value: '01012345678', grant: false }],
-      ['card.number', { type: 'card', value: '1111222233334444', grant: false }],
+      ['phone', { type: 'phone', value: '01012345678', grant: false, label: 'Mobile' }],
+      ['card.number', { type: 'card', value: '1111222233334444', grant: false, label: 'Card number' }],
     ]),
     fakeCipher,
   );
@@ -43,7 +45,7 @@ describe('vault', () => {
     await vault.unlock('correct-horse');
     expect(vault.locked).toBe(false);
     expect(vault.get('phone')?.value).toBe('01012345678');
-    expect(vault.list()).toContainEqual({ name: 'card.number', type: 'card', grant: false });
+    expect(vault.list()).toContainEqual({ name: 'card.number', type: 'card', grant: false, label: 'Card number' });
     expect(vault.live().size).toBe(2);
   });
 
@@ -98,14 +100,14 @@ describe('vault', () => {
 
   it('파일 뮤테이션 — set/remove/overview, 첫 set이 패스프레이즈를 확정한다', () => {
     const path = join(dir, 'mutate.dpapi'); // 파일 없음에서 시작
-    setVaultEntry(path, 'pp', 'login.shop.com.id', { type: 'text', value: 'me@x.com', grant: false }, fakeCipher);
-    setVaultEntry(path, 'pp', 'login.shop.com.pw', { type: 'text', value: 'hunter22', grant: false }, fakeCipher);
+    setVaultEntry(path, 'pp', 'login.shop.com.id', { type: 'text', value: 'me@x.com', grant: false, label: 'Login ID' }, fakeCipher);
+    setVaultEntry(path, 'pp', 'login.shop.com.pw', { type: 'text', value: 'hunter22', grant: false, label: 'Login password' }, fakeCipher);
 
     const overview = overviewVaultFile(path, 'pp', fakeCipher);
-    expect(overview).toContainEqual({ name: 'login.shop.com.pw', type: 'text', len: 8, grant: false });
+    expect(overview).toContainEqual({ name: 'login.shop.com.pw', type: 'text', len: 8, grant: false, label: 'Login password' });
     expect(JSON.stringify(overview)).not.toContain('hunter22'); // 값은 나가지 않는다
 
-    expect(() => setVaultEntry(path, 'wrong', 'x', { type: 'text', value: 'v', grant: false }, fakeCipher)).toThrow();
+    expect(() => setVaultEntry(path, 'wrong', 'x', { type: 'text', value: 'v', grant: false, label: 'X' }, fakeCipher)).toThrow();
     expect(() => removeVaultEntry(path, 'wrong', 'login.shop.com.id', fakeCipher)).toThrow();
 
     expect(removeVaultEntry(path, 'pp', 'login.shop.com.id', fakeCipher)).toBe(true);
@@ -115,9 +117,9 @@ describe('vault', () => {
 
   it('grant 플래그 — 저장한 대로 돌아오고, 필드가 없는 예전 파일은 false로 읽힌다', async () => {
     const path = join(dir, 'grant.dpapi');
-    setVaultEntry(path, 'pp', 'shop.payment.pin', { type: 'text', value: 'x', grant: true }, fakeCipher);
+    setVaultEntry(path, 'pp', 'shop.payment.pin', { type: 'text', value: 'x', grant: true, label: 'Pin' }, fakeCipher);
     expect(overviewVaultFile(path, 'pp', fakeCipher)).toContainEqual({
-      name: 'shop.payment.pin', type: 'text', len: 1, grant: true,
+      name: 'shop.payment.pin', type: 'text', len: 1, grant: true, label: 'Pin',
     });
 
     // grant 필드가 없는 예전 스키마 — 파일을 직접 만들어 읽힌다
@@ -126,7 +128,7 @@ describe('vault', () => {
     writeFileSync(old, fakeCipher.protect(Buffer.from('{"phone":{"type":"phone","value":"01012345678"}}', 'utf8'), entropy));
     const vault = createVault(old, { cipher: fakeCipher });
     await vault.unlock('pp');
-    expect(vault.list()).toEqual([{ name: 'phone', type: 'phone', grant: false }]);
+    expect(vault.list()).toEqual([{ name: 'phone', type: 'phone', grant: false, label: '' }]);
   });
 
   it('overview — 파일이 없으면 빈 목록', () => {
@@ -143,5 +145,58 @@ describe('vault', () => {
       },
     });
     await expect(vault.unlock('p')).rejects.toThrow(/malformed/);
+  });
+});
+describe('라벨 (FWL-056)', () => {
+  /** 라벨이 비어 있는 예전 스키마 파일을 그대로 만든다 */
+  function seedUnlabelled(name: string, json: string): string {
+    const path = join(dir, name);
+    const entropy = createHash('sha256').update('pp', 'utf8').digest();
+    writeFileSync(path, fakeCipher.protect(Buffer.from(json, 'utf8'), entropy));
+    return path;
+  }
+
+  it('defaultLabelFor — 스키마 키 정확 일치 → 마지막 두 마디 → 마지막 마디 첫 글자 대문자', () => {
+    expect(defaultLabelFor('card.personal.number')).toBe('Card number');
+    expect(defaultLabelFor('passport.givenname')).toBe('Given names (Latin)');
+    expect(defaultLabelFor('profile.rrn')).toBe('Resident reg. no.');
+    expect(defaultLabelFor('shop.com.login.password')).toBe('Login password');
+    expect(defaultLabelFor('naver.com.payment.pinnumber')).toBe('Payment PIN');
+    expect(defaultLabelFor('shop.com.nickname')).toBe('Nickname');
+    expect(defaultLabelFor('memo')).toBe('Memo');
+  });
+
+  it('unlock은 파일을 건드리지 않는다 — 라벨이 비어 있어도 바이트가 그대로다', async () => {
+    const path = seedUnlabelled('nofill.dpapi', '{"phone":{"type":"phone","value":"01012345678","grant":false}}');
+    const before = readFileSync(path);
+    const vault = createVault(path, { cipher: fakeCipher });
+    await vault.unlock('pp');
+    expect(vault.list()).toEqual([{ name: 'phone', type: 'phone', grant: false, label: '' }]);
+    expect(readFileSync(path).equals(before)).toBe(true);
+  });
+
+  it('seedLabels — 백업을 먼저 만들고 빈 라벨만 채운다. 두 번째 호출은 no-op이고 백업도 더 만들지 않는다', () => {
+    const path = seedUnlabelled(
+      'seed.dpapi',
+      '{"profile.phone":{"type":"phone","value":"01012345678","grant":false},'
+      + '"card.personal.cvv":{"type":"text","value":"123","grant":true,"label":"내 카드 뒷자리"}}',
+    );
+    const before = readFileSync(path);
+
+    const first = seedLabels(path, 'pp', fakeCipher);
+    expect(first.seeded).toEqual([{ key: 'profile.phone', label: 'Mobile' }]);
+    expect(existsSync(first.backup)).toBe(true);
+    // 백업은 시딩 이전 내용 그대로 복호화된다
+    expect(readFileSync(first.backup).equals(before)).toBe(true);
+
+    const after = overviewVaultFile(path, 'pp', fakeCipher);
+    expect(after).toContainEqual({ name: 'profile.phone', type: 'phone', len: 11, grant: false, label: 'Mobile' });
+    // 사용자가 이미 지어 둔 이름은 건드리지 않는다
+    expect(after).toContainEqual({ name: 'card.personal.cvv', type: 'text', len: 3, grant: true, label: '내 카드 뒷자리' });
+
+    const backupsAfterFirst = readdirSync(dir).filter((f) => f.startsWith('seed.dpapi.bak-'));
+    const second = seedLabels(path, 'pp', fakeCipher);
+    expect(second).toEqual({ backup: '', seeded: [] });
+    expect(readdirSync(dir).filter((f) => f.startsWith('seed.dpapi.bak-'))).toEqual(backupsAfterFirst);
   });
 });

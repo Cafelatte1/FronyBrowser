@@ -24,7 +24,7 @@ import type {
   Session,
 } from '@wallet/core';
 import { KeyNotFoundError, VaultLockedError, fail, failFromUnknown, findKeys, markGrantUsed, resolve, verifyPayGrant, writeUnlockHandoff } from '@wallet/core';
-import type { BrowserProfile, Cipher, DryRun, KeypadSpec, LaunchProfile, Ref, SnapshotOptions, TargetKind } from '@wallet/core';
+import type { BrowserProfile, Cipher, KeypadSpec, LaunchProfile, Ref, SnapshotOptions, TargetKind, TestMode } from '@wallet/core';
 import { isBrowserProfile } from '@wallet/core';
 import { TargetError } from '@wallet/app';
 
@@ -36,8 +36,8 @@ export type HandlerDeps = {
   readonly audit: Audit;
   /** grant 플래그 키가 있으면 fill이 이 키로 검증한다; 없으면 grant 키 fill은 grant_invalid(fail-closed) */
   readonly grantKey?: string | null;
-  /** 켜져 있으면 grant 플래그 키의 fill이 입력만 건너뛴다 (FWL-035). 없으면 꺼진 것 */
-  readonly dryRun?: DryRun;
+  /** 켜져 있으면 grant 플래그 키의 fill이 입력만 건너뛰고, 보류 키의 fill은 key_held로 거부된다 (FWL-035/056). 없으면 꺼진 것 */
+  readonly testMode?: TestMode;
   /** unlock 인계 파일 경로 (FWL-042). 없으면 vault_handoff는 거부된다 */
   readonly handoffFile?: string;
   readonly handoffCipher?: Cipher;
@@ -347,6 +347,23 @@ export function createHandlers(deps: HandlerDeps) {
         }
       }
 
+      // Test Mode 보류 키 (FWL-056). PIN 스킵은 에이전트가 눈치채지 못하도록 일부러 감추지만,
+      // 보류는 빈 칸을 제출시키는 대신 주행을 멈추라는 뜻이라 에러로 돌려준다
+      if (deps.testMode?.get() === true) {
+        const held = deps.testMode.held();
+        const heldKey = keys.find((k) => held.includes(k));
+        if (heldKey !== undefined) {
+          audit.append({
+            evt: 'policy_denied',
+            ...baseAudit(found.session, caller),
+            origin: frameOrigin,
+            key: heldKey,
+            rule: 'key_held',
+          });
+          return fail('key_held', 'key held back from test runs');
+        }
+      }
+
       // 볼트에서 grant 플래그가 켜진 키 — grant 발급자의 grant가 있어야 채운다 (규칙 13).
       // resolve가 통과했으니 금고는 열려 있고 키도 전부 있다
       const grantNeededFor = keys.find((k) => vault.get(k)?.grant === true) ?? null;
@@ -383,9 +400,9 @@ export function createHandlers(deps: HandlerDeps) {
         }
       }
 
-      // dry-run: grant 키는 여기까지(세션·grant·키패드 규칙) 전부 통과한 뒤 입력만 건너뛴다 (FWL-035).
-      // 응답은 실제 fill과 같아야 한다 — 주행 중인 에이전트가 dry-run임을 알 수 없어야 한다
-      const dry = grantNeededFor !== null && (deps.dryRun?.get() ?? false);
+      // Test Mode: grant 키는 여기까지(세션·grant·키패드 규칙) 전부 통과한 뒤 입력만 건너뛴다 (FWL-035).
+      // 응답은 실제 fill과 같아야 한다 — 주행 중인 에이전트가 Test Mode임을 알 수 없어야 한다
+      const dry = grantNeededFor !== null && (deps.testMode?.get() ?? false);
       if (!dry) {
         try {
           const r = await target.act(
@@ -416,7 +433,7 @@ export function createHandlers(deps: HandlerDeps) {
         mode: keypad !== undefined ? 'keypad' : 'text',
         ...(keypad !== undefined && !('digitSelector' in keypad) ? { resolver: keypad.resolver } : {}),
         ...(grantNeededFor !== null ? { grant: true } : {}),
-        ...(dry ? { dry: true } : {}), // dry-run은 감사로그에만 드러난다 — 응답에는 절대 싣지 않는다
+        ...(dry ? { dry: true } : {}), // Test Mode는 감사로그에만 드러난다 — 응답에는 절대 싣지 않는다. 필드 이름은 기록된 사실이라 그대로 둔다
       });
       return { ok: true, filledFrom: keys[0] ?? null, len: resolved.value.length };
     },

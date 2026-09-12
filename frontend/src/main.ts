@@ -132,7 +132,7 @@ for (const btn of document.querySelectorAll<HTMLButtonElement>('.btn-unlock')) {
   });
 }
 
-// ── dry-run 토글 ─────────────────────────────────────────────
+// ── Test Mode 토글 ───────────────────────────────────────────
 // 켜져 있으면 결제 비밀번호(grant 플래그 키) fill이 grant 검증까지만 하고 입력하지 않는다.
 // 실결제 없이 E2E를 돌리는 스위치 — 켜진 채 두면 실주행이 조용히 결제 없이 끝나므로 레일에 크게 띄운다
 
@@ -143,7 +143,7 @@ function renderDryRun(on: boolean): void {
 
 async function refreshDryRun(): Promise<void> {
   try {
-    const res = await fetch('/admin/dry-run', { headers: { authorization: `Bearer ${token() ?? ''}` } });
+    const res = await fetch('/admin/test-mode', { headers: { authorization: `Bearer ${token() ?? ''}` } });
     const r = (await res.json().catch(() => null)) as { ok?: boolean; on?: boolean } | null;
     if (res.ok && r?.ok) renderDryRun(r.on === true);
   } catch {
@@ -152,13 +152,13 @@ async function refreshDryRun(): Promise<void> {
 }
 
 async function setDryRun(on: boolean): Promise<void> {
-  if (on && !confirm('DRY RUN skips typing payment PINs — turn it off before the next live run. Turn it on?')) return;
+  if (on && !confirm('Test Mode skips typing payment PINs — turn it off before the next live run. Turn it on?')) return;
   try {
-    const r = (await api('/admin/dry-run', { on })) as { on?: boolean };
+    const r = (await api('/admin/test-mode', { on })) as { on?: boolean };
     renderDryRun(r.on === true);
-    note(true, r.on ? 'DRY RUN on — payment PINs are not typed.' : 'DRY RUN off — payments are live.');
+    note(true, r.on ? 'Test Mode on — payment PINs are not typed.' : 'Test Mode off — payments are live.');
   } catch (e) {
-    note(false, `Could not change dry-run: ${(e as Error).message}`);
+    note(false, `Could not change Test Mode: ${(e as Error).message}`);
   }
 }
 $('btn-dry-on').addEventListener('click', () => { void setDryRun(true); });
@@ -403,7 +403,7 @@ async function bootstrap(): Promise<void> {
     show('view-main');
     void refreshHealth();
     void refreshDryRun();
-    setInterval(() => { void refreshHealth(); void refreshDryRun(); }, 30_000); // TTL 만료·첫 저장·dry-run을 레일에 반영
+    setInterval(() => { void refreshHealth(); void refreshDryRun(); }, 30_000); // TTL 만료·첫 저장·Test Mode를 레일에 반영
   } else {
     show('view-login');
   }

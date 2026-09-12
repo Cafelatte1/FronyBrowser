@@ -22,7 +22,7 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPlaywrightTarget, createBrowserPool, hasStorageState, mergeStorageStates, persistStorageStates } from '@wallet/app';
-import { VaultLockedError, consumeUnlockHandoff, createAudit, createDryRun, createSessionStore, createVault, defaultDataDir } from '@wallet/core';
+import { VaultLockedError, consumeUnlockHandoff, createAudit, createSessionStore, createTestMode, createVault, defaultDataDir } from '@wallet/core';
 import { parseDuration } from '@wallet/core';
 import { createAdminVerifier } from './auth-admin.js';
 import { createIntrospectionVerifier } from './auth.js';
@@ -104,9 +104,9 @@ function main(): void {
       },
     );
   }
-  // dry-run 토글 — 관리 UI가 켜고 끈다. 켜진 채 실주행하면 결제가 조용히 빠지므로 기동 때마다 크게 알린다 (FWL-035)
-  const dryRun = createDryRun(join(dataDir, 'dry-run.json'));
-  if (dryRun.get()) console.warn('★ DRY RUN 켜짐 — grant 플래그 키는 grant 검증·소모만 하고 입력하지 않는다. 관리 UI에서 끈다');
+  // Test Mode 토글 — 관리 UI가 켜고 끈다. 켜진 채 실주행하면 결제가 조용히 빠지므로 기동 때마다 크게 알린다 (FWL-035)
+  const testMode = createTestMode(join(dataDir, 'test-mode.json'));
+  if (testMode.get()) console.warn('★ TEST MODE 켜짐 — grant 플래그 키는 grant 검증·소모만 하고 입력하지 않는다. 관리 UI에서 끈다');
   // 세션 수명 (FWL-036): 배포별로 조정한다. 스윕 주기는 TTL에서 끌어내 짧은 TTL도 지켜지게
   const sessionTtlMs = parseDuration(process.env['WALLET_SESSION_TTL'] ?? '15m', 'WALLET_SESSION_TTL');
   const maxSessions = Number(process.env['WALLET_MAX_SESSIONS'] ?? 4);
@@ -145,7 +145,7 @@ function main(): void {
       }, origin);
     },
   });
-  const handlers = createHandlers({ vault, sessions, targets: new Map([['browser', target]]), audit, grantKey, dryRun, handoffFile });
+  const handlers = createHandlers({ vault, sessions, targets: new Map([['browser', target]]), audit, grantKey, testMode, handoffFile });
 
   // 로컬 모드에선 authenticate와 /login이 먼저 끊어 이 자리에 닿지 않는다 (FWL-053)
   const notUsedInLocalMode = (): never => {
@@ -161,7 +161,7 @@ function main(): void {
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
 
-  const vaultAdmin = createVaultAdmin({ vaultFile, vault, audit });
+  const vaultAdmin = createVaultAdmin({ vaultFile, sessionsDir, vault, audit });
   const staticDir = fileURLToPath(new URL('../../../frontend/dist', import.meta.url));
 
   console.log(`vault unlock TTL: ${Math.round(unlockTtlMs / 60_000)}m`);
@@ -169,7 +169,7 @@ function main(): void {
   if (local) console.log('local mode: no auth, loopback only (WALLET_LOCAL=1)');
   const publicUrl = process.env['WALLET_PUBLIC_URL']?.replace(/\/$/, '') || undefined;
   const deps = {
-    handlers, vault, audit, verify, local, adminClients, vaultAdmin, verifyAdmin, staticDir, vaultFile, dryRun,
+    handlers, vault, audit, verify, local, adminClients, vaultAdmin, verifyAdmin, staticDir, vaultFile, testMode, unlockTtlMs,
     serviceKey: auth?.serviceKey, publicUrl, authIssuer: auth?.authIssuer, guiSessions: createGuiSessions(),
   };
   const server = createHttpServer(deps);

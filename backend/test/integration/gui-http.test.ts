@@ -9,7 +9,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { consumeUnlockHandoff, createMemoryAudit, createMemoryDryRun, createSessionStore, createVault } from '@wallet/core';
+import { consumeUnlockHandoff, createMemoryAudit, createMemoryTestMode, createSessionStore, createVault } from '@wallet/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { fakeCipher, fakeTarget } from '../helpers/fakes.js';
 import type { AdminVerifier } from '@wallet/api';
@@ -36,9 +36,10 @@ const verifyAdmin: AdminVerifier = async (username, password) => {
 const dir = mkdtempSync(join(tmpdir(), 'wallet-gui-'));
 const staticDir = join(dir, 'dist');
 const vaultFile = join(dir, 'vault.dpapi');
+const sessionsDir = join(dir, 'sessions');
 const vault = createVault(vaultFile, { cipher: fakeCipher });
 const audit = createMemoryAudit();
-const dryRun = createMemoryDryRun(false);
+const testMode = createMemoryTestMode(false);
 const handoffFile = join(dir, 'unlock-handoff.dpapi');
 let server: Server;
 let baseUrl: string;
@@ -62,11 +63,11 @@ beforeAll(async () => {
     audit,
     verify,
     adminClients: ['key:admin-box'],
-    vaultAdmin: createVaultAdmin({ vaultFile, vault, audit, cipher: fakeCipher }),
+    vaultAdmin: createVaultAdmin({ vaultFile, sessionsDir, vault, audit, cipher: fakeCipher }),
     vaultFile,
     verifyAdmin,
     staticDir,
-    dryRun,
+    testMode,
     serviceKey: 'frony_service_self',
     authIssuer: 'https://auth.example.ts.net',
   });
@@ -113,7 +114,7 @@ describe('Funnel 커넥터 (FWL-040)', () => {
     const pub = createHttpServer({
       handlers: createHandlers({ vault, sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }), targets: new Map([['browser', target]]), audit }),
       vault, audit, verify, adminClients: [],
-      vaultAdmin: createVaultAdmin({ vaultFile, vault, audit, cipher: fakeCipher }),
+      vaultAdmin: createVaultAdmin({ vaultFile, sessionsDir, vault, audit, cipher: fakeCipher }),
       vaultFile, verifyAdmin, staticDir,
       publicUrl: 'https://gpu.example.ts.net/wallet', authIssuer: 'https://auth.example.ts.net',
     });
@@ -187,7 +188,7 @@ describe('/vault/* 인증', () => {
     expect(JSON.stringify(set.body)).not.toContain('01012345678');
 
     const list = await post('/vault/list', { passphrase: 'pp' }, token);
-    expect(list.body['keys']).toContainEqual({ name: 'phone', type: 'phone', len: 11, grant: false });
+    expect(list.body['keys']).toContainEqual({ name: 'phone', type: 'phone', len: 11, grant: false, label: 'Phone' });
     expect(JSON.stringify(list.body)).not.toContain('01012345678');
 
     const setLog = audit.records.find((r) => r.evt === 'vault_set');
@@ -244,7 +245,7 @@ describe('/vault/* 인증', () => {
     expect(JSON.stringify(r.body)).not.toContain('value2');
     expect(audit.records.filter((x) => x.evt === 'vault_set' && (x.key === 'b.one' || x.key === 'b.two') && x.ok === true)).toHaveLength(2);
     const list = await post('/vault/list', { passphrase: 'pp' }, token);
-    expect(list.body['keys']).toContainEqual({ name: 'b.two', type: 'text', len: 6, grant: false });
+    expect(list.body['keys']).toContainEqual({ name: 'b.two', type: 'text', len: 6, grant: false, label: 'Two' });
   });
 
   it('grant 플래그 — 저장한 대로 목록에 실리고, boolean이 아니면 400', async () => {
@@ -253,7 +254,7 @@ describe('/vault/* 인증', () => {
     expect(set.status).toBe(200);
     expect(set.body).toMatchObject({ ok: true, key: 'g.pin', grant: true });
     const list = await post('/vault/list', { passphrase: 'pp' }, token);
-    expect(list.body['keys']).toContainEqual({ name: 'g.pin', type: 'text', len: 4, grant: true });
+    expect(list.body['keys']).toContainEqual({ name: 'g.pin', type: 'text', len: 4, grant: true, label: 'Pin' });
     const bad = await post('/vault/set', { passphrase: 'pp', entries: [{ key: 'g.bad', type: 'text', value: 'v', grant: 'yes' }] }, token);
     expect(bad.status).toBe(400);
   });
@@ -305,31 +306,33 @@ describe('/vault/handoff (FWL-042)', () => {
   });
 });
 
-describe('/admin/dry-run (FWL-035) — 관리 UI 세션 전용', () => {
+describe('/admin/test-mode (FWL-035/056) — 관리 UI 세션 전용', () => {
   const get = async (bearer?: string) => {
-    const res = await fetch(`${baseUrl}/admin/dry-run`, { headers: bearer ? { authorization: `Bearer ${bearer}` } : {} });
-    return { status: res.status, body: (await res.json()) as { ok: boolean; on?: boolean } };
+    const res = await fetch(`${baseUrl}/admin/test-mode`, { headers: bearer ? { authorization: `Bearer ${bearer}` } : {} });
+    return { status: res.status, body: (await res.json()) as { ok: boolean; on?: boolean; held?: string[] } };
   };
 
   it('무인증 401, 기기 키는 admin이라도 403 — 에이전트 경로에서 결제를 빼는 스위치를 만질 수 없다', async () => {
     expect((await get()).status).toBe(401);
     expect((await get('frony_admin')).status).toBe(403);
     expect((await get('frony_agent')).status).toBe(403);
-    expect((await post('/admin/dry-run', { on: true }, 'frony_admin')).status).toBe(403);
-    expect(dryRun.get()).toBe(false);
+    expect((await post('/admin/test-mode', { on: true }, 'frony_admin')).status).toBe(403);
+    expect(testMode.get()).toBe(false);
   });
 
-  it('wsess로 읽고 바꾼다 — 감사에 dry_run_set, /health에는 없다', async () => {
+  it('wsess로 on과 held를 읽고 바꾼다 — /health에는 없다', async () => {
     const t = await login();
-    expect((await get(t)).body).toEqual({ ok: true, on: false });
-    expect((await post('/admin/dry-run', { on: true }, t)).body).toEqual({ ok: true, on: true });
-    expect(dryRun.get()).toBe(true);
+    expect((await get(t)).body).toEqual({ ok: true, on: false, held: [] });
+    expect((await post('/admin/test-mode', { on: true }, t)).body).toEqual({ ok: true, on: true, held: [] });
+    expect(testMode.get()).toBe(true);
+    expect((await post('/admin/test-mode', { held: ['g.pin'] }, t)).body).toEqual({ ok: true, on: true, held: ['g.pin'] });
+    expect(testMode.held()).toEqual(['g.pin']);
     expect((await get(t)).body.on).toBe(true);
-    expect(audit.records.find((r) => r.evt === 'dry_run_set')).toMatchObject({ on: true, client: 'admin:admin' });
-    expect((await post('/admin/dry-run', { on: 'yes' }, t)).status).toBe(400);
+    expect((await post('/admin/test-mode', { on: 'yes' }, t)).status).toBe(400);
+    expect((await post('/admin/test-mode', { held: [1] }, t)).status).toBe(400);
     const health = await (await fetch(`${baseUrl}/health`)).text();
-    expect(health.toLowerCase()).not.toContain('dry');
-    await post('/admin/dry-run', { on: false }, t);
+    expect(health.toLowerCase()).not.toContain('test');
+    await post('/admin/test-mode', { on: false, held: [] }, t);
   });
 });
 
@@ -350,7 +353,7 @@ describe('로컬 모드 (FWL-053)', () => {
       vault, audit, verify: boom, verifyAdmin: boom,
       local: true,
       adminClients: ['local'],
-      vaultAdmin: createVaultAdmin({ vaultFile, vault, audit, cipher: fakeCipher }),
+      vaultAdmin: createVaultAdmin({ vaultFile, sessionsDir, vault, audit, cipher: fakeCipher }),
       vaultFile, staticDir,
     });
     await new Promise<void>((r) => local.listen(0, '127.0.0.1', r));

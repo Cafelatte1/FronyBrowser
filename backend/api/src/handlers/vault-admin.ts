@@ -1,33 +1,45 @@
 /**
  * 금고 등록 admin 핸들러 — MCP 미노출, /admin/* 내부 경로 전용 (8.4).
  *
- * 값은 요청으로 들어오기만 하고 어떤 응답에도 실리지 않는다 (이름·타입·길이만).
+ * 값은 요청으로 들어오기만 하고 어떤 응답에도 실리지 않는다 (이름·타입·길이·라벨만).
  * 파일 쓰기는 서버 프로세스가 수행한다 — DPAPI가 계정 종속이므로 값을 등록한
  * 계정과 서버 실행 계정이 같아야 한다는 제약은 그대로다.
  */
 
+import { existsSync, readdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Audit, Cipher, Result, Vault, VaultEntry, ValueType } from '@wallet/core';
-import { fail, overviewVaultFile, removeVaultEntry, setVaultEntries } from '@wallet/core';
+import { defaultLabelFor, fail, overviewVaultFile, readVaultFile, removeVaultEntry, seedLabels, setVaultEntries, writeVaultFile } from '@wallet/core';
 import type { Caller } from './impl.js';
 
 const KEY_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const LABEL_MAX = 60;
 const VALUE_TYPES: ReadonlySet<string> = new Set([
   'card', 'phone', 'rrn', 'email', 'name', 'address', 'text',
 ]);
 
 export type VaultAdminDeps = {
   readonly vaultFile: string;
+  /** 로그인 세션 파일 디렉터리 — reset이 금고와 함께 지운다 (FWL-056) */
+  readonly sessionsDir: string;
   /** 파일을 바꾼 뒤 메모리 갱신용 — 갱신 없이는 스크러버가 새 값을 모른다 */
   readonly vault: Vault;
   readonly audit: Audit;
   readonly cipher?: Cipher;
 };
 
+/** 저장할 이름을 정한다: 보낸 값 > 이미 붙어 있던 이름 > 키에서 지어낸 기본값 */
+function labelOf(existing: ReadonlyMap<string, VaultEntry>, key: string, label?: string): string {
+  if (label !== undefined) return label.trim();
+  const current = existing.get(key)?.label;
+  return current !== undefined && current !== '' ? current : defaultLabelFor(key);
+}
+
 export function createVaultAdmin(deps: VaultAdminDeps) {
-  const { vaultFile, vault, audit } = deps;
+  const { vaultFile, sessionsDir, vault, audit } = deps;
   const cipher = deps.cipher;
 
-  function log(caller: Caller, evt: 'vault_set' | 'vault_rm', key: string, ok: boolean, len?: number) {
+  function log(caller: Caller, evt: 'vault_set' | 'vault_rm', key: string | null, ok: boolean, len?: number) {
     audit.append({
       evt,
       sid: null,
@@ -53,10 +65,11 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
       type: string,
       value: string,
       grant = false,
-    ): Promise<Result<{ key: string; type: ValueType; len: number; grant: boolean }>> {
-      const r = await this.setMany(caller, passphrase, [{ key, type, value, grant }]);
+      label?: string,
+    ): Promise<Result<{ key: string; type: ValueType; len: number; grant: boolean; label: string }>> {
+      const r = await this.setMany(caller, passphrase, [{ key, type, value, grant, ...(label !== undefined ? { label } : {}) }]);
       if (!r.ok) return r;
-      const first = r.keys[0] as { key: string; type: ValueType; len: number; grant: boolean };
+      const first = r.keys[0] as { key: string; type: ValueType; len: number; grant: boolean; label: string };
       return { ok: true, ...first };
     },
 
@@ -64,17 +77,25 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
     async setMany(
       caller: Caller,
       passphrase: string,
-      items: ReadonlyArray<{ key: string; type: string; value: string; grant?: boolean }>,
-    ): Promise<Result<{ keys: Array<{ key: string; type: ValueType; len: number; grant: boolean }> }>> {
+      items: ReadonlyArray<{ key: string; type: string; value: string; grant?: boolean; label?: string }>,
+    ): Promise<Result<{ keys: Array<{ key: string; type: ValueType; len: number; grant: boolean; label: string }> }>> {
       if (items.length === 0) return fail('bad_request', 'no entries');
-      for (const { key, type, value, grant } of items) {
+      for (const { key, type, value, grant, label } of items) {
         if (!KEY_NAME.test(key)) return fail('bad_request', 'invalid key name');
         if (!VALUE_TYPES.has(type)) return fail('bad_request', 'invalid type');
         if (value.length === 0) return fail('bad_request', 'empty value');
         if (grant !== undefined && typeof grant !== 'boolean') return fail('bad_request', 'invalid grant');
+        if (label !== undefined && (typeof label !== 'string' || label.trim().length === 0 || label.trim().length > LABEL_MAX)) {
+          return fail('bad_request', 'invalid label');
+        }
       }
+      const entries: Array<readonly [string, VaultEntry]> = [];
       try {
-        const entries: Array<readonly [string, VaultEntry]> = items.map(({ key, type, value, grant }) => [key, { type: type as ValueType, value, grant: grant === true }]);
+        // 이미 붙어 있는 이름을 지우지 않으려면 현재 파일을 먼저 읽어야 한다
+        const existing = existsSync(vaultFile) ? readVaultFile(vaultFile, passphrase, cipher) : new Map<string, VaultEntry>();
+        for (const { key, type, value, grant, label } of items) {
+          entries.push([key, { type: type as ValueType, value, grant: grant === true, label: labelOf(existing, key, label) }]);
+        }
         setVaultEntries(vaultFile, passphrase, entries, cipher);
         await refresh(passphrase);
       } catch {
@@ -83,7 +104,67 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
         return fail('vault_locked', 'wrong passphrase or account mismatch');
       }
       for (const { key, value } of items) log(caller, 'vault_set', key, true, value.length);
-      return { ok: true, keys: items.map(({ key, type, value, grant }) => ({ key, type: type as ValueType, len: value.length, grant: grant === true })) };
+      return { ok: true, keys: entries.map(([key, e]) => ({ key, type: e.type, len: e.value.length, grant: e.grant, label: e.label })) };
+    },
+
+    /** 값을 다시 받지 않고 grant 플래그만 바꾼다 (FWL-056). 없는 키는 key_not_found */
+    async grant(caller: Caller, passphrase: string, key: string, grant: boolean): Promise<Result<{ key: string; grant: boolean }>> {
+      try {
+        const entries = readVaultFile(vaultFile, passphrase, cipher);
+        const current = entries.get(key);
+        if (current === undefined) return fail('key_not_found', 'not in vault');
+        entries.set(key, { ...current, grant });
+        writeVaultFile(vaultFile, passphrase, entries, cipher);
+        await refresh(passphrase);
+      } catch {
+        log(caller, 'vault_set', key, false);
+        return fail('vault_locked', 'wrong passphrase or account mismatch');
+      }
+      log(caller, 'vault_set', key, true);
+      return { ok: true, key, grant };
+    },
+
+    /** 이름 없는 항목에 이름을 지어 넣는다. 백업을 먼저 만든다 (FWL-056) */
+    async seedLabels(caller: Caller, passphrase: string): Promise<Result<{ seeded: Array<{ key: string; label: string }> }>> {
+      let result: ReturnType<typeof seedLabels>;
+      try {
+        result = seedLabels(vaultFile, passphrase, cipher);
+        await refresh(passphrase);
+      } catch {
+        return fail('vault_locked', 'wrong passphrase or account mismatch');
+      }
+      // 백업 경로는 서버 쪽 파일 경로라 응답에 싣지 않는다 — 운영자는 서버 로그에서 본다
+      if (result.backup !== '') console.log(`금고 라벨 시딩 — 백업: ${result.backup}`);
+      for (const { key } of result.seeded) log(caller, 'vault_set', key, true);
+      return { ok: true, seeded: [...result.seeded] };
+    },
+
+    /** 금고 파일을 새로 만든다 (FWL-056). 이미 있으면 already_exists — 덮어쓰면 값이 통째로 사라진다 */
+    async create(caller: Caller, passphrase: string): Promise<Result<unknown>> {
+      if (existsSync(vaultFile)) return fail('already_exists', 'vault already exists');
+      try {
+        writeVaultFile(vaultFile, passphrase, new Map(), cipher);
+        await vault.unlock(passphrase);
+      } catch {
+        log(caller, 'vault_set', null, false);
+        return fail('vault_locked', 'wrong passphrase or account mismatch');
+      }
+      log(caller, 'vault_set', null, true);
+      return { ok: true };
+    },
+
+    /**
+     * 마스터 비밀번호를 잊었을 때의 초기화 (FWL-056). 패스프레이즈를 받지 않는다 — 열 수 없는 금고를 버리는 일이다.
+     * 로그인 세션 파일도 같은 패스프레이즈로 암호화돼 있어 남겨 두면 읽을 수 없는 파일만 쌓인다.
+     */
+    async reset(caller: Caller): Promise<Result<unknown>> {
+      rmSync(vaultFile, { force: true });
+      if (existsSync(sessionsDir)) {
+        for (const file of readdirSync(sessionsDir)) rmSync(join(sessionsDir, file), { force: true, recursive: true });
+      }
+      vault.lock();
+      log(caller, 'vault_rm', null, true);
+      return { ok: true };
     },
 
     async rm(caller: Caller, passphrase: string, key: string): Promise<Result<{ key: string }>> {
@@ -103,7 +184,7 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
     async overview(
       _caller: Caller,
       passphrase: string,
-    ): Promise<Result<{ keys: Array<{ name: string; type: ValueType; len: number; grant: boolean }> }>> {
+    ): Promise<Result<{ keys: Array<{ name: string; type: ValueType; len: number; grant: boolean; label: string }> }>> {
       try {
         return { ok: true, keys: overviewVaultFile(vaultFile, passphrase, cipher) };
       } catch {

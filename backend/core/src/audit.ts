@@ -27,7 +27,7 @@ export type AuditEvent =
   | 'vault_unlock' | 'vault_lock' | 'vault_set' | 'vault_rm'
   /** 다음 프로세스로 unlock을 인계했다 (FWL-042). 필드: ok, remainingMs. 패스프레이즈는 없다 */
   | 'vault_handoff'
-  /** 관리 UI에서 dry-run 토글을 바꿨다 (FWL-035). 필드: on, by(admin:<user>) */
+  /** 관리 UI에서 Test Mode 토글을 바꿨다 (FWL-035/056). 필드: on, held. 이벤트 이름은 기록된 사실이라 옛 로그와 이어지도록 그대로 둔다 */
   | 'dry_run_set'
   /** 세션 종료 시 쿠키 재저장을 건너뜀 (FWL-025). 필드: host, reason */
   | 'storage_persist_skipped'

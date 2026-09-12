@@ -50,7 +50,7 @@ const fakeFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit
     unlockedMs = 2 * 24 * 60 * 60_000 + 3 * 60 * 60_000;
     return jsonRes(200, { ok: true, ttlMs: unlockedMs });
   }
-  if (path === '/admin/dry-run') {
+  if (path === '/admin/test-mode') {
     if (init?.method === 'POST') dryRunOn = body['on'] === true;
     return jsonRes(200, { ok: true, on: dryRunOn });
   }
@@ -188,13 +188,13 @@ describe('로그인 → 저장 → 현황 → 삭제', () => {
     expect(document.querySelector('[data-key="profile.email"] .row-del')).toBeNull();
   });
 
-  it('DRY RUN 카드는 켜졌을 때만 보이고, 버튼이 새 상태를 보낸다 (FWL-035)', async () => {
+  it('Test Mode 카드는 켜졌을 때만 보이고, 버튼이 새 상태를 보낸다 (FWL-035)', async () => {
     expect($('dry-on').hidden).toBe(true);
     expect($('dry-off').hidden).toBe(false);
     calls.length = 0;
     $('btn-dry-on').click();
     for (let i = 0; i < 4; i++) await tick();
-    expect(calls.find((c) => c.path === '/admin/dry-run')?.body).toEqual({ on: true });
+    expect(calls.find((c) => c.path === '/admin/test-mode')?.body).toEqual({ on: true });
     expect($('dry-on').hidden).toBe(false);
     $('btn-dry-off').click();
     for (let i = 0; i < 4; i++) await tick();

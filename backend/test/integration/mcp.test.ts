@@ -18,7 +18,7 @@ import { connectMcp } from '../helpers/mcp-client.js';
 
 const SECRET_PHONE = '01012345678';
 
-const vault = fakeVault({ entries: { phone: { type: 'phone', value: SECRET_PHONE, grant: false } } });
+const vault = fakeVault({ entries: { phone: { type: 'phone', value: SECRET_PHONE, grant: false, label: 'Mobile' } } });
 
 /** 페이지가 입력값을 본문에 되비추는 최악 케이스 — egress가 가려야 한다 */
 const { target } = fakeTarget({

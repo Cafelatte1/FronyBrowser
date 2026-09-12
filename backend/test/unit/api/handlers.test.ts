@@ -7,8 +7,8 @@ import type { Ref, SessionId } from '@wallet/core';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { DryRun } from '@wallet/core';
-import { VaultLockedError, createMemoryAudit, createMemoryDryRun, createSessionStore, createVault, writeVaultFile } from '@wallet/core';
+import type { TestMode } from '@wallet/core';
+import { VaultLockedError, createMemoryAudit, createMemoryTestMode, createSessionStore, createVault, writeVaultFile } from '@wallet/core';
 import { describe, expect, it } from 'vitest';
 import { createHandlers } from '@wallet/api';
 import { fakeCipher, fakeTarget, fakeVault } from '../../helpers/fakes.js';
@@ -18,19 +18,19 @@ import type { FakeTargetOptions } from '../../helpers/fakes.js';
 const GRANT_KEY = 'test-grant-key';
 
 const ENTRIES = {
-  phone: { type: 'phone', value: '01012345678', grant: false },
-  'card.number': { type: 'card', value: '1234567812345678', grant: false },
-  'shop.payment.pinnumber': { type: 'text', value: '1234', grant: true },
-  'shop.keypad.pin': { type: 'text', value: '739105', grant: false },
-  'shop.keypad.broken': { type: 'text', value: 'ab-cd', grant: false },
-  'shop.keypad.grantpin': { type: 'text', value: '5678', grant: true },
-  'shop.keypad.sprite': { type: 'text', value: '4951', grant: false },
+  phone: { type: 'phone', value: '01012345678', grant: false, label: 'Mobile' },
+  'card.number': { type: 'card', value: '1234567812345678', grant: false, label: 'Card number' },
+  'shop.payment.pinnumber': { type: 'text', value: '1234', grant: true, label: 'Payment PIN' },
+  'shop.keypad.pin': { type: 'text', value: '739105', grant: false, label: 'Pin' },
+  'shop.keypad.broken': { type: 'text', value: 'ab-cd', grant: false, label: 'Broken' },
+  'shop.keypad.grantpin': { type: 'text', value: '5678', grant: true, label: 'Grantpin' },
+  'shop.keypad.sprite': { type: 'text', value: '4951', grant: false, label: 'Sprite' },
 } as const;
 
 const KEYPAD = { digitSelector: "img.kpd[aria-label='{digit}']" };
 const SPRITE = { keySelector: 'a.pad-key', cellSelector: 'span[class^=pad-pos-]', resolver: 'sprite-template' } as const;
 
-function setup(over: FakeTargetOptions = {}, now?: () => number, dryRun?: DryRun) {
+function setup(over: FakeTargetOptions = {}, now?: () => number, testMode?: TestMode) {
   const state = fakeTarget({ url: 'https://shop.com/checkout', ...over });
   const audit = createMemoryAudit();
   const handlers = createHandlers({
@@ -39,7 +39,7 @@ function setup(over: FakeTargetOptions = {}, now?: () => number, dryRun?: DryRun
     targets: new Map([['browser', state.target]]),
     audit,
     grantKey: GRANT_KEY,
-    ...(dryRun ? { dryRun } : {}),
+    ...(testMode ? { testMode } : {}),
   });
   return { handlers, audit, state };
 }
@@ -288,11 +288,11 @@ describe('vault_handoff (FWL-042)', () => {
   });
 });
 
-describe('fill — dry-run (FWL-035)', () => {
+describe('fill — Test Mode (FWL-035)', () => {
   const PIN = '{{vault:shop.payment.pinnumber}}';
 
   it('켜져 있으면 grant 검증·소모까지 하고 입력만 건너뛴다 — 응답은 실제 fill과 같고 감사에만 dry:true', async () => {
-    const { handlers, audit, state } = setup({}, undefined, createMemoryDryRun(true));
+    const { handlers, audit, state } = setup({}, undefined, createMemoryTestMode(true));
     const sid = await begin(handlers);
     const token = freshGrant(GRANT_KEY, { session_id: String(sid) });
     const r = await handlers.fill(caller, sid, ref, PIN, token);
@@ -307,7 +307,7 @@ describe('fill — dry-run (FWL-035)', () => {
   });
 
   it('키패드 grant 키도 버튼을 하나도 누르지 않는다', async () => {
-    const { handlers, audit, state } = setup({}, undefined, createMemoryDryRun(true));
+    const { handlers, audit, state } = setup({}, undefined, createMemoryTestMode(true));
     const sid = await begin(handlers);
     const token = freshGrant(GRANT_KEY, { session_id: String(sid) });
     const r = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.grantpin}}', token, KEYPAD);
@@ -317,7 +317,7 @@ describe('fill — dry-run (FWL-035)', () => {
   });
 
   it('켜져 있어도 grant 없으면 여전히 grant_required, 위조면 grant_invalid', async () => {
-    const { handlers } = setup({}, undefined, createMemoryDryRun(true));
+    const { handlers } = setup({}, undefined, createMemoryTestMode(true));
     const sid = await begin(handlers);
     const none = await handlers.fill(caller, sid, ref, PIN);
     if (none.ok) throw new Error('should fail');
@@ -327,8 +327,8 @@ describe('fill — dry-run (FWL-035)', () => {
     expect(forged.error.code).toBe('grant_invalid');
   });
 
-  it('grant가 필요 없는 키는 dry-run과 무관하게 채워진다 — 스위치는 결제 키만 덮는다', async () => {
-    const { handlers, audit, state } = setup({}, undefined, createMemoryDryRun(true));
+  it('grant가 필요 없는 키는 Test Mode와 무관하게 채워진다 — 스위치는 결제 키만 덮는다', async () => {
+    const { handlers, audit, state } = setup({}, undefined, createMemoryTestMode(true));
     const sid = await begin(handlers);
     expect((await handlers.fill(caller, sid, ref, '{{vault:phone}}')).ok).toBe(true);
     expect(state.filled[0]?.value).toBe('01012345678');
@@ -336,7 +336,7 @@ describe('fill — dry-run (FWL-035)', () => {
   });
 
   it('꺼져 있으면 평소대로 입력한다', async () => {
-    const { handlers, state } = setup({}, undefined, createMemoryDryRun(false));
+    const { handlers, state } = setup({}, undefined, createMemoryTestMode(false));
     const sid = await begin(handlers);
     const token = freshGrant(GRANT_KEY, { session_id: String(sid) });
     expect((await handlers.fill(caller, sid, ref, PIN, token)).ok).toBe(true);
@@ -398,7 +398,7 @@ describe('세션 TTL', () => {
   it('sweep_expired — 금고 TTL 만료(열림→잠김)를 vault_lock 감사로 남긴다', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'wallet-handlers-'));
     const file = join(dir, 'vault.dpapi');
-    writeVaultFile(file, 'pp', new Map([['phone', { type: 'phone', value: '01012345678' }]]), fakeCipher);
+    writeVaultFile(file, 'pp', new Map([['phone', { type: 'phone', value: '01012345678', grant: false, label: 'Mobile' }]]), fakeCipher);
     let t = 0;
     const vault = createVault(file, { cipher: fakeCipher, ttlMs: 1_000, now: () => t });
     const audit = createMemoryAudit();
@@ -664,5 +664,23 @@ describe('감사 로그로 세션 재구성 (FWL-030)', () => {
     const sid = await begin(handlers);
     await handlers.wait(caller, sid, ref, 0);
     expect(audit.records.find((x) => x.evt === 'wait')).toMatchObject({ ref: '1:e1', timeoutMs: 1 });
+  });
+});
+
+describe('fill — Test Mode 보류 키 (FWL-056)', () => {
+  it('Test Mode가 켜져 있을 때만 key_held로 막는다 — 아무것도 입력하지 않고 감사에 policy_denied', async () => {
+    const on = setup({}, undefined, createMemoryTestMode(true, ['phone']));
+    const sid = await begin(on.handlers);
+    const r = await on.handlers.fill(caller, sid, ref, '{{vault:phone}}');
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('key_held');
+    expect(on.state.filled).toHaveLength(0);
+    expect(on.audit.records.find((x) => x.evt === 'policy_denied')).toMatchObject({ key: 'phone', rule: 'key_held' });
+
+    // 꺼져 있으면 같은 보류 목록이어도 평소대로 채운다
+    const off = setup({}, undefined, createMemoryTestMode(false, ['phone']));
+    const sid2 = await begin(off.handlers);
+    expect((await off.handlers.fill(caller, sid2, ref, '{{vault:phone}}')).ok).toBe(true);
+    expect(off.state.filled[0]?.value).toBe('01012345678');
   });
 });
