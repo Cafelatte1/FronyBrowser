@@ -94,7 +94,8 @@ h1, h2 { margin: 0; }
 .login-card .foot { margin-top: 18px; }
 
 /* ── 셸 ── */
-.shell { display: flex; align-items: stretch; min-height: 100vh; }
+/* 높이를 화면에 묶어 둔다 — 안 묶으면 .scroll이 넘칠 일이 없어 페이지째 스크롤되고 레일과 제목까지 딸려 간다 */
+.shell { display: flex; align-items: stretch; height: 100vh; }
 .rail { flex: none; width: 252px; background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; gap: var(--s-5); padding: var(--s-5) var(--s-4); }
 .content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 
@@ -114,8 +115,8 @@ h1, h2 { margin: 0; }
 .bar div { height: 100%; width: 0; background: var(--gradient); }
 
 /* ── 레일 내비 ── */
-.nav { display: flex; flex-direction: column; gap: 2px; }
-.nav-heading { font-size: var(--t-meta); font-weight: 600; color: var(--text-muted); letter-spacing: .4px; padding: 0 var(--s-2) var(--s-2); }
+.nav { display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.nav-heading { position: sticky; top: 0; background: var(--surface); font-size: var(--t-meta); font-weight: 600; color: var(--text-muted); letter-spacing: .4px; padding: 0 var(--s-2) var(--s-2); }
 .nav-item { display: flex; align-items: center; gap: var(--s-3); padding: 9px var(--s-3); border-radius: var(--r-md); color: var(--text-muted); cursor: pointer; transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease); }
 .nav-item:hover { background: var(--surface-raised); }
 .nav-item.on { background: var(--accent-subtle); color: var(--on-accent-subtle); }
@@ -142,7 +143,8 @@ h1, h2 { margin: 0; }
 .lock-pill svg { width: 14px; height: 14px; flex: none; }
 
 /* ── 배너 ── */
-.banner { display: flex; gap: var(--s-3); align-items: flex-start; padding: var(--s-3) var(--s-8); border-bottom: 1px solid var(--border); font-size: var(--t-meta); line-height: var(--lh-body); }
+/* 토스트 — 오른쪽 아래에 떠 있다가 스스로 사라진다. 흐름 밖이라 패널을 밀지 않는다 */
+.banner { position: fixed; right: var(--s-6); bottom: var(--s-6); z-index: 50; display: flex; gap: var(--s-3); align-items: flex-start; max-width: 380px; padding: var(--s-3) var(--s-4); border: 1px solid var(--border-strong); border-radius: var(--r-lg); box-shadow: var(--e-4); font-size: var(--t-meta); line-height: var(--lh-body); animation: toast-in var(--dur-fast) var(--ease); }
 .banner span { flex: 1; }
 .banner b { font-weight: 600; }
 .banner .banner-icon { width: 16px; height: 16px; flex: none; margin-top: 2px; }
@@ -150,6 +152,8 @@ h1, h2 { margin: 0; }
 .banner.ok .banner-icon { display: none; }
 .banner.err { background: var(--danger-subtle); color: var(--on-danger-subtle); }
 .banner.err .banner-dot { display: none; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .banner { animation: none; } }
 
 /* ── 가운데 카드 (잠김 / 금고 생성) ── */
 .centered-pane { flex: 1; display: flex; align-items: flex-start; justify-content: center; padding: var(--s-10) var(--s-8); }
@@ -227,7 +231,8 @@ h1, h2 { margin: 0; }
   .row > :nth-child(5) { grid-column: 2; grid-row: 2; justify-self: end; }
 }
 @media (max-width: 820px) {
-  .shell { flex-direction: column; }
+  /* 좁은 화면에서는 레일이 위로 쌓인다 — 높이를 묶으면 둘 다 눌리므로 페이지째 스크롤한다 */
+  .shell { flex-direction: column; height: auto; min-height: 100vh; }
   .rail { width: 100%; border-right: 0; border-bottom: 1px solid var(--border); }
   .nav { flex-direction: row; overflow-x: auto; gap: 6px; padding-bottom: 6px; }
   .nav-heading, .nav-sep { display: none; }

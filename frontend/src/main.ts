@@ -53,7 +53,7 @@ function show(id: 'view-login' | 'view-main'): void {
   if (id === 'view-login') closeDialog();
 }
 
-// 패널 머리 아래의 배너 — 성공 4초, 실패 10초 뒤 사라진다
+// 오른쪽 아래 토스트 — 성공 4초, 실패 10초 뒤 사라진다
 let msgTimer: ReturnType<typeof setTimeout> | undefined;
 function note(ok: boolean, text: string): void {
   const b = $('banner');
