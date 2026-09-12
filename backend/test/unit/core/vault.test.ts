@@ -12,6 +12,7 @@ import { fakeCipher } from '../../helpers/fakes.js';
 import {
   createVault,
   defaultLabelFor,
+  migrateKeyNames,
   overviewVaultFile,
   removeVaultEntry,
   seedLabels,
@@ -158,8 +159,8 @@ describe('라벨 (FWL-056)', () => {
 
   it('defaultLabelFor — 스키마 키 정확 일치 → 마지막 두 마디 → 마지막 마디 첫 글자 대문자', () => {
     expect(defaultLabelFor('card.personal.number')).toBe('Card number');
-    expect(defaultLabelFor('passport.givenname')).toBe('Given names (Latin)');
-    expect(defaultLabelFor('profile.rrn')).toBe('Resident reg. no.');
+    expect(defaultLabelFor('passport.personal.givenname')).toBe('Given names (Latin)');
+    expect(defaultLabelFor('profile.personal.rrn')).toBe('Resident reg. no.');
     expect(defaultLabelFor('shop.com.login.password')).toBe('Login password');
     expect(defaultLabelFor('naver.com.payment.pinnumber')).toBe('Payment PIN');
     expect(defaultLabelFor('shop.com.nickname')).toBe('Nickname');
@@ -178,19 +179,19 @@ describe('라벨 (FWL-056)', () => {
   it('seedLabels — 백업을 먼저 만들고 빈 라벨만 채운다. 두 번째 호출은 no-op이고 백업도 더 만들지 않는다', () => {
     const path = seedUnlabelled(
       'seed.dpapi',
-      '{"profile.phone":{"type":"phone","value":"01012345678","grant":false},'
+      '{"profile.personal.phone":{"type":"phone","value":"01012345678","grant":false},'
       + '"card.personal.cvv":{"type":"text","value":"123","grant":true,"label":"내 카드 뒷자리"}}',
     );
     const before = readFileSync(path);
 
     const first = seedLabels(path, 'pp', fakeCipher);
-    expect(first.seeded).toEqual([{ key: 'profile.phone', label: 'Mobile' }]);
+    expect(first.seeded).toEqual([{ key: 'profile.personal.phone', label: 'Mobile' }]);
     expect(existsSync(first.backup)).toBe(true);
     // 백업은 시딩 이전 내용 그대로 복호화된다
     expect(readFileSync(first.backup).equals(before)).toBe(true);
 
     const after = overviewVaultFile(path, 'pp', fakeCipher);
-    expect(after).toContainEqual({ name: 'profile.phone', type: 'phone', len: 11, grant: false, label: 'Mobile' });
+    expect(after).toContainEqual({ name: 'profile.personal.phone', type: 'phone', len: 11, grant: false, label: 'Mobile' });
     // 사용자가 이미 지어 둔 이름은 건드리지 않는다
     expect(after).toContainEqual({ name: 'card.personal.cvv', type: 'text', len: 3, grant: true, label: '내 카드 뒷자리' });
 
@@ -198,5 +199,41 @@ describe('라벨 (FWL-056)', () => {
     const second = seedLabels(path, 'pp', fakeCipher);
     expect(second).toEqual({ backup: '', seeded: [] });
     expect(readdirSync(dir).filter((f) => f.startsWith('seed.dpapi.bak-'))).toEqual(backupsAfterFirst);
+  });
+});
+
+describe('키 이름 이전 (FWL-057)', () => {
+  /** 두 조각이던 옛 이름 열 개 — 값 길이·grant·label을 서로 다르게 둔다 */
+  const OLD_KEYS = [
+    'profile.rrn', 'profile.phone', 'profile.carrier', 'profile.email', 'profile.address',
+    'passport.number', 'passport.surname', 'passport.givenname', 'passport.issue', 'passport.expiry',
+  ];
+  const newName = (key: string): string => key.replace('.', '.personal.');
+
+  it('migrateKeyNames — 백업을 먼저 만들고 열 개를 그대로 옮긴다. 두 번째 호출은 no-op이고 백업도 더 만들지 않는다', () => {
+    const path = join(dir, 'migrate.dpapi');
+    writeVaultFile(
+      path,
+      'pp',
+      new Map(OLD_KEYS.map((key, i) => [key, { type: 'text' as const, value: 'v'.repeat(i + 1), grant: i % 2 === 0, label: `L${i}` }])),
+      fakeCipher,
+    );
+    const before = readFileSync(path);
+
+    const first = migrateKeyNames(path, 'pp', fakeCipher);
+    expect(first.moved).toEqual(OLD_KEYS.map((key) => ({ from: key, to: newName(key) })));
+    expect(existsSync(first.backup)).toBe(true);
+    // 백업은 옮기기 이전 내용 그대로 복호화된다
+    expect(readFileSync(first.backup).equals(before)).toBe(true);
+
+    // 값 길이·grant·label은 그대로 따라온다
+    expect(overviewVaultFile(path, 'pp', fakeCipher)).toEqual(
+      OLD_KEYS.map((key, i) => ({ name: newName(key), type: 'text', len: i + 1, grant: i % 2 === 0, label: `L${i}` })),
+    );
+
+    const backupsAfterFirst = readdirSync(dir).filter((f) => f.startsWith('migrate.dpapi.bak-'));
+    const second = migrateKeyNames(path, 'pp', fakeCipher);
+    expect(second).toEqual({ backup: '', moved: [] });
+    expect(readdirSync(dir).filter((f) => f.startsWith('migrate.dpapi.bak-'))).toEqual(backupsAfterFirst);
   });
 });

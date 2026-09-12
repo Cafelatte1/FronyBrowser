@@ -5,6 +5,7 @@
  *   wallet rm <key>
  *   wallet list
  *   wallet relabel            — 이름이 비어 있는 항목에 기본 이름을 지어 넣는다 (백업을 먼저 만든다, FWL-056)
+ *   wallet migrate-keys       — 두 조각이던 옛 키 이름을 `그룹.대상.항목`으로 옮긴다 (백업을 먼저 만든다, FWL-057)
  *   wallet unlock              — 서버의 /vault/unlock 호출 (admin 기기에서만)
  *   wallet handoff             — 재시작 직전에 /vault/handoff 호출: 다음 프로세스가 같은 만료로 unlock을 이어받는다 (FWL-042)
  *   wallet status              — 금고 상태(/health) + TEST MODE 토글 (데이터 디렉터리의 test-mode.json, 서버 머신에서)
@@ -17,7 +18,7 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ValueType, VaultEntry } from '@wallet/core';
-import { defaultDataDir, defaultLabelFor, readTestModeFlag, readVaultFile, seedLabels, writeVaultFile } from '@wallet/core';
+import { defaultDataDir, defaultLabelFor, migrateKeyNames, readTestModeFlag, readVaultFile, seedLabels, writeVaultFile } from '@wallet/core';
 import { promptHidden } from './prompt.js';
 
 const TYPES = ['card', 'phone', 'rrn', 'email', 'name', 'address', 'text'] as const;
@@ -30,7 +31,7 @@ function vaultPath(): string {
 
 function usage(): never {
   console.error(
-    'usage: wallet set <key> --type <t> [--grant] [--label "<name>"] | wallet rm <key> | wallet list | wallet relabel | wallet unlock | wallet status',
+    'usage: wallet set <key> --type <t> [--grant] [--label "<name>"] | wallet rm <key> | wallet list | wallet relabel | wallet migrate-keys | wallet unlock | wallet status',
   );
   console.error(`  types: ${TYPES.join(' ')}`);
   process.exit(2);
@@ -120,6 +121,19 @@ async function main(): Promise<void> {
     }
     console.log(`백업: ${backup}`);
     for (const { key: k, label } of seeded) console.log(`${k} → ${label}`);
+    return;
+  }
+
+  if (cmd === 'migrate-keys') {
+    const passphrase = await promptHidden('마스터 비밀번호: ');
+    await openOrInit(path, passphrase); // 열리는지 먼저 확인 — 틀린 비밀번호는 여기서 끝난다
+    const { backup, moved } = migrateKeyNames(path, passphrase);
+    if (moved.length === 0) {
+      console.log('옮길 키가 없습니다.');
+      return;
+    }
+    console.log(`백업: ${backup}`);
+    for (const { from, to } of moved) console.log(`${from} → ${to}`);
     return;
   }
 

@@ -59,20 +59,20 @@ const VALUE_TYPES: ReadonlySet<string> = new Set([
 
 /** 스키마가 정한 14개 키의 이름 — 정확히 일치할 때만 쓴다 */
 const SCHEMA_LABELS: ReadonlyMap<string, string> = new Map([
-  ['profile.rrn', 'Resident reg. no.'],
-  ['profile.phone', 'Mobile'],
-  ['profile.carrier', 'Carrier'],
-  ['profile.email', 'Email'],
-  ['profile.address', 'Home address'],
+  ['profile.personal.rrn', 'Resident reg. no.'],
+  ['profile.personal.phone', 'Mobile'],
+  ['profile.personal.carrier', 'Carrier'],
+  ['profile.personal.email', 'Email'],
+  ['profile.personal.address', 'Home address'],
   ['card.personal.number', 'Card number'],
   ['card.personal.expiry', 'Expiry'],
   ['card.personal.cvv', 'CVV'],
   ['card.personal.password2', 'Card password'],
-  ['passport.number', 'Passport number'],
-  ['passport.surname', 'Surname (Latin)'],
-  ['passport.givenname', 'Given names (Latin)'],
-  ['passport.issue', 'Date of issue'],
-  ['passport.expiry', 'Date of expiry'],
+  ['passport.personal.number', 'Passport number'],
+  ['passport.personal.surname', 'Surname (Latin)'],
+  ['passport.personal.givenname', 'Given names (Latin)'],
+  ['passport.personal.issue', 'Date of issue'],
+  ['passport.personal.expiry', 'Date of expiry'],
 ]);
 
 /** origin마다 접두가 달라지는 키 — 마지막 두 마디로 알아본다 */
@@ -243,6 +243,48 @@ export function seedLabels(
   });
   writeVaultFile(path, passphrase, entries, cipher);
   return { backup, seeded };
+}
+
+/** FWL-057: 두 조각이던 옛 이름 → `그룹.대상.항목`. 값·grant·label은 그대로 옮긴다 */
+export const KEY_RENAMES: ReadonlyMap<string, string> = new Map([
+  ['profile.rrn', 'profile.personal.rrn'],
+  ['profile.phone', 'profile.personal.phone'],
+  ['profile.carrier', 'profile.personal.carrier'],
+  ['profile.email', 'profile.personal.email'],
+  ['profile.address', 'profile.personal.address'],
+  ['passport.number', 'passport.personal.number'],
+  ['passport.surname', 'passport.personal.surname'],
+  ['passport.givenname', 'passport.personal.givenname'],
+  ['passport.issue', 'passport.personal.issue'],
+  ['passport.expiry', 'passport.personal.expiry'],
+]);
+
+/**
+ * 옛 이름을 새 이름으로 옮긴다. 볼트를 열 때 자동으로 하지 않는다 — 운영자가 부를 때 한 번,
+ * 기존 파일을 백업한 뒤에 쓴다. 옮길 것이 없으면 아무것도 하지 않는다.
+ */
+export function migrateKeyNames(
+  path: string,
+  passphrase: string,
+  cipher: Cipher = dpapi,
+): { readonly backup: string; readonly moved: ReadonlyArray<{ from: string; to: string }> } {
+  const entries = readVaultFile(path, passphrase, cipher);
+  // 새 이름이 이미 있으면 덮어쓰지 않는다 — 옛 이름은 그대로 두고 moved에서 뺀다
+  const movable = [...KEY_RENAMES]
+    .filter(([from, to]) => entries.has(from) && !entries.has(to))
+    .map(([from, to]) => ({ from, to }));
+  if (movable.length === 0) return { backup: '', moved: [] };
+
+  // 쓰기 전에 원본을 복사해 둔다 — 이름을 잘못 옮겨도 되돌릴 수 있어야 한다
+  const backup = `${path}.bak-${backupStamp(new Date())}`;
+  copyFileSync(path, backup);
+
+  for (const { from, to } of movable) {
+    entries.set(to, entries.get(from)!);
+    entries.delete(from);
+  }
+  writeVaultFile(path, passphrase, entries, cipher);
+  return { backup, moved: movable };
 }
 
 export type VaultOptions = {

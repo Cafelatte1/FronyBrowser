@@ -444,7 +444,7 @@ $('btn-add-key').addEventListener('click', () => {
   const field = $<HTMLInputElement>('add-field').value.trim();
   if (!label || !field) return note(false, 'Enter a display name and a key name.');
   const key = `${current}.${field}`;
-  if (!EXTRA_KEY.test(key)) return note(false, 'Key names are scope.field or scope.instance.field (e.g. example-shop.payment.pinnumber).');
+  if (!EXTRA_KEY.test(key)) return note(false, `Key names are group.subject.field — this group is ${current}, so type the two parts after it (e.g. login.id).`);
   if (existing.has(key) || (pendingRows.get(current) ?? []).some((p) => p.key === key)) {
     return note(false, `${key} is already in this group.`);
   }

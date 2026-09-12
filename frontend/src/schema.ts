@@ -21,10 +21,11 @@ export const CUSTOM_BLURB =
 
 export const DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
 /**
- * 키 이름 규칙 (2026-09-06 decided): `범위.항목` (단일값) 또는 `범위.인스턴스.항목` (여러 개 가능).
- * 사이트 키는 범위=사이트, 인스턴스=용도 — example-shop.payment.pinnumber. 기타 등록도 이 두 형태만 받는다
+ * 키 이름 규칙 (2026-09-12 decided): `그룹.대상.항목` 세 조각 고정. 그룹은 콘솔 레일의 한 줄,
+ * 대상은 그 그룹 안에서 어느 것인지 (card.personal / kurly.login), 항목이 값이다.
+ * 조각 수가 화면의 구조와 같아야 키 하나가 곧 한 행이다.
  */
-export const EXTRA_KEY = /^[a-z0-9-]+\.[a-z0-9-]+(\.[a-z0-9-]+)?$/;
+export const EXTRA_KEY = /^[a-z0-9-]+\.[a-z0-9-]+\.[a-z0-9-]+$/;
 
 export const SECTIONS: SectionDef[] = [
   {
@@ -32,11 +33,11 @@ export const SECTIONS: SectionDef[] = [
     title: 'Personal',
     blurb: 'Values leave this page only as a write. What comes back is a name, a type and a length — never the value, not to this page and not to an agent.',
     fields: [
-      { key: 'profile.rrn', label: 'Resident reg. no.', type: 'rrn', hint: '000000-0000000', pattern: /^\d{6}-\d{7}$/ },
-      { key: 'profile.phone', label: 'Mobile', type: 'phone', hint: '010-0000-0000', pattern: /^01\d-\d{3,4}-\d{4}$/ },
-      { key: 'profile.carrier', label: 'Carrier', type: 'text', hint: 'SKT / KT / LG U+' },
-      { key: 'profile.email', label: 'Email', type: 'email', hint: 'name@example.com', pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/ },
-      { key: 'profile.address', label: 'Home address', type: 'address', hint: 'Street + unit' },
+      { key: 'profile.personal.rrn', label: 'Resident reg. no.', type: 'rrn', hint: '000000-0000000', pattern: /^\d{6}-\d{7}$/ },
+      { key: 'profile.personal.phone', label: 'Mobile', type: 'phone', hint: '010-0000-0000', pattern: /^01\d-\d{3,4}-\d{4}$/ },
+      { key: 'profile.personal.carrier', label: 'Carrier', type: 'text', hint: 'SKT / KT / LG U+' },
+      { key: 'profile.personal.email', label: 'Email', type: 'email', hint: 'name@example.com', pattern: /^[^\s@]+@[^\s@]+\.[^\s@]+$/ },
+      { key: 'profile.personal.address', label: 'Home address', type: 'address', hint: 'Street + unit' },
     ],
   },
   {
@@ -55,11 +56,11 @@ export const SECTIONS: SectionDef[] = [
     title: 'Passport',
     blurb: "Latin fields must match the passport's printed spelling exactly — an airline form will reject a mismatch long after the agent has left the page.",
     fields: [
-      { key: 'passport.number', label: 'Passport number', type: 'text', hint: 'M12345678', pattern: /^[A-Z]\d{3}[A-Z0-9]\d{4}$/ },
-      { key: 'passport.surname', label: 'Surname (Latin)', type: 'name', hint: 'HONG', pattern: /^[A-Z]+$/ },
-      { key: 'passport.givenname', label: 'Given names (Latin)', type: 'name', hint: 'GILDONG', pattern: /^[A-Z]+( [A-Z]+)*$/ },
-      { key: 'passport.issue', label: 'Date of issue', type: 'text', hint: 'YYYY-MM-DD', pattern: DATE },
-      { key: 'passport.expiry', label: 'Date of expiry', type: 'text', hint: 'YYYY-MM-DD', pattern: DATE },
+      { key: 'passport.personal.number', label: 'Passport number', type: 'text', hint: 'M12345678', pattern: /^[A-Z]\d{3}[A-Z0-9]\d{4}$/ },
+      { key: 'passport.personal.surname', label: 'Surname (Latin)', type: 'name', hint: 'HONG', pattern: /^[A-Z]+$/ },
+      { key: 'passport.personal.givenname', label: 'Given names (Latin)', type: 'name', hint: 'GILDONG', pattern: /^[A-Z]+( [A-Z]+)*$/ },
+      { key: 'passport.personal.issue', label: 'Date of issue', type: 'text', hint: 'YYYY-MM-DD', pattern: DATE },
+      { key: 'passport.personal.expiry', label: 'Date of expiry', type: 'text', hint: 'YYYY-MM-DD', pattern: DATE },
     ],
   },
 ];

@@ -231,8 +231,8 @@ describe('내비와 행', () => {
 
 describe('그룹 저장', () => {
   it('형식이 틀린 항목이 하나라도 있으면 비밀번호도 묻지 않는다', async () => {
-    type(inputFor('profile.phone'), '010-1234-5678');
-    type(inputFor('profile.email'), 'not-an-email');
+    type(inputFor('profile.personal.phone'), '010-1234-5678');
+    type(inputFor('profile.personal.email'), 'not-an-email');
     expect($('entered').textContent).toContain('2 fields');
     calls.length = 0;
     $('btn-save').click();
@@ -244,7 +244,7 @@ describe('그룹 저장', () => {
   });
 
   it('보고 있는 그룹의 적은 칸만, 키·타입·값·grant·라벨로 보낸다', async () => {
-    type(inputFor('profile.email'), '  a@b.co  ');
+    type(inputFor('profile.personal.email'), '  a@b.co  ');
     nav('card').click();
     type(inputFor('card.personal.expiry'), '12/27'); // 다른 그룹 — 이번 저장에 실리지 않는다
     nav('personal').click();
@@ -253,12 +253,12 @@ describe('그룹 저장', () => {
     expect(sets()).toHaveLength(1);
     expect(sets()[0]?.body['passphrase']).toBe(MASTER);
     const entries = sets()[0]?.body['entries'] as Array<{ key: string; type: string; value: string; grant: boolean; label: string }>;
-    expect(entries.map((e) => e.key).sort()).toEqual(['profile.email', 'profile.phone']);
-    expect(entries.find((e) => e.key === 'profile.email')).toEqual({ key: 'profile.email', type: 'email', value: 'a@b.co', grant: false, label: 'Email' });
+    expect(entries.map((e) => e.key).sort()).toEqual(['profile.personal.email', 'profile.personal.phone']);
+    expect(entries.find((e) => e.key === 'profile.personal.email')).toEqual({ key: 'profile.personal.email', type: 'email', value: 'a@b.co', grant: false, label: 'Email' });
     expect(registered.has('card.personal.expiry')).toBe(false);
     // 저장 뒤 현황을 다시 그렸다
-    expect(row('profile.email').querySelector('.badge')?.textContent).toBe('Registered');
-    expect(inputFor('profile.email').value).toBe('');
+    expect(row('profile.personal.email').querySelector('.badge')?.textContent).toBe('Registered');
+    expect(inputFor('profile.personal.email').value).toBe('');
     expect(nav('personal').querySelector('.nav-count')?.textContent).toBe('2/5');
     expect($('dialog').hidden).toBe(true);
   });
@@ -267,39 +267,39 @@ describe('그룹 저장', () => {
 describe('grant 토글과 키 보류', () => {
   it('등록된 키의 grant 체크는 그 자리에서 /vault/grant를 부른다', async () => {
     calls.length = 0;
-    (row('profile.email').querySelector('.grant') as HTMLButtonElement).click();
+    (row('profile.personal.email').querySelector('.grant') as HTMLButtonElement).click();
     await settle();
-    expect(calls.find((c) => c.path === '/vault/grant')?.body).toEqual({ key: 'profile.email', grant: true });
+    expect(calls.find((c) => c.path === '/vault/grant')?.body).toEqual({ key: 'profile.personal.email', grant: true });
     expect(sets()).toHaveLength(0);
-    expect(registered.get('profile.email')?.grant).toBe(true);
-    expect(row('profile.email').querySelector('.grant')?.getAttribute('data-grant')).toBe('on');
+    expect(registered.get('profile.personal.email')?.grant).toBe(true);
+    expect(row('profile.personal.email').querySelector('.grant')?.getAttribute('data-grant')).toBe('on');
   });
 
   it('값이 없는 키의 grant는 저장 때 같이 나간다', async () => {
-    (row('profile.carrier').querySelector('.grant') as HTMLButtonElement).click();
-    expect(row('profile.carrier').querySelector('.grant')?.getAttribute('data-grant')).toBe('on');
-    expect(calls.some((c) => c.path === '/vault/grant' && c.body['key'] === 'profile.carrier')).toBe(false);
-    type(inputFor('profile.carrier'), 'SKT');
+    (row('profile.personal.carrier').querySelector('.grant') as HTMLButtonElement).click();
+    expect(row('profile.personal.carrier').querySelector('.grant')?.getAttribute('data-grant')).toBe('on');
+    expect(calls.some((c) => c.path === '/vault/grant' && c.body['key'] === 'profile.personal.carrier')).toBe(false);
+    type(inputFor('profile.personal.carrier'), 'SKT');
     calls.length = 0;
     await confirmSave();
     const entries = sets()[0]?.body['entries'] as Array<{ key: string; grant: boolean }>;
-    expect(entries).toEqual([{ key: 'profile.carrier', type: 'text', value: 'SKT', grant: true, label: 'Carrier' }]);
+    expect(entries).toEqual([{ key: 'profile.personal.carrier', type: 'text', value: 'SKT', grant: true, label: 'Carrier' }]);
   });
 
   it('키 이름을 누르면 보류 목록 전체를 /admin/test-mode로 보낸다', async () => {
     calls.length = 0;
-    (row('profile.phone').querySelector('.row-label') as HTMLElement).click();
+    (row('profile.personal.phone').querySelector('.row-label') as HTMLElement).click();
     await settle();
-    expect(calls.find((c) => c.path === '/admin/test-mode' && c.method === 'POST')?.body).toEqual({ held: ['profile.phone'] });
-    expect(row('profile.phone').dataset['hold']).toBe('on');
+    expect(calls.find((c) => c.path === '/admin/test-mode' && c.method === 'POST')?.body).toEqual({ held: ['profile.personal.phone'] });
+    expect(row('profile.personal.phone').dataset['hold']).toBe('on');
     // Test Mode가 꺼져 있어도 보류 표시는 남고, 레일의 안내는 켰을 때만 나온다
     expect($('test-note').hidden).toBe(true);
 
     calls.length = 0;
-    (row('profile.email').querySelector('.row-label') as HTMLElement).click();
+    (row('profile.personal.email').querySelector('.row-label') as HTMLElement).click();
     await settle();
     expect((calls.find((c) => c.path === '/admin/test-mode' && c.method === 'POST')?.body['held'] as string[]).sort())
-      .toEqual(['profile.email', 'profile.phone']);
+      .toEqual(['profile.personal.email', 'profile.personal.phone']);
   });
 
   it('Test Mode 알약은 확인 대화상자를 거쳐 켜지고 레일에 안내가 붙는다', async () => {
@@ -353,7 +353,7 @@ describe('사용자가 만든 그룹', () => {
     type($<HTMLInputElement>('add-name'), 'Bad');
     type($<HTMLInputElement>('add-field'), 'a.b.c');
     $('btn-add-key').click();
-    expect($('banner-text').textContent).toContain('scope.field');
+    expect($('banner-text').textContent).toContain('group.subject.field');
     expect(rowKeys()).toEqual(['example-shop.payment.pinnumber']);
   });
 
@@ -390,12 +390,12 @@ describe('삭제 · 대화상자 · 상태 변화', () => {
   it('삭제하면 목록에서 빠지고 배지가 Not set으로 돌아간다', async () => {
     nav('personal').click();
     calls.length = 0;
-    (row('profile.email').querySelector('.row-del') as HTMLButtonElement).click();
+    (row('profile.personal.email').querySelector('.row-del') as HTMLButtonElement).click();
     await settle();
-    expect(calls.find((c) => c.path === '/vault/rm')?.body).toEqual({ key: 'profile.email' });
-    expect(registered.has('profile.email')).toBe(false);
-    expect(row('profile.email').querySelector('.badge')?.textContent).toBe('Not set');
-    expect(row('profile.email').querySelector('.row-del')).toBeNull();
+    expect(calls.find((c) => c.path === '/vault/rm')?.body).toEqual({ key: 'profile.personal.email' });
+    expect(registered.has('profile.personal.email')).toBe(false);
+    expect(row('profile.personal.email').querySelector('.badge')?.textContent).toBe('Not set');
+    expect(row('profile.personal.email').querySelector('.row-del')).toBeNull();
   });
 
   it('Escape로 대화상자가 닫힌다', () => {
