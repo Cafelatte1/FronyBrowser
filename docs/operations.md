@@ -2,13 +2,13 @@
 
 **When to read**: when deploying, restarting or diagnosing the running instance
 **Code**: `backend/api/src/main.ts`, `scripts/deploy.ps1`, `scripts/register-task.ps1`
-**Related**: [auth](auth.md), [logging](logging.md), [data-model](data-model.md)
+**Related**: [auth](auth.md), [pay-grant](pay-grant.md)
 
 ---
 
 ## Host
 
-Home server reachable over Tailscale, single port `9420` for everything (MCP, internal routes, static GUI, health). FronyAuth (introspection dependency) is a separate service reached through `FRONY_AUTH_URL`. Browser profile per origin (the policy file): the default is patchright Chromium headless; an origin behind a bot manager runs system Chrome headful (headless/automation fingerprints are blocked there, see [architecture](architecture.md#decisions)).
+Home server reachable over Tailscale, single port `9420` for everything (MCP, internal routes, static GUI, health). FronyAuth (introspection dependency) is a separate service reached through `FRONY_AUTH_URL`. The browser profile is chosen per session by the caller: patchright Chromium headless by default, system Chrome headful for a site whose bot manager blocks headless and automation fingerprints.
 
 ## Launcher and environment
 
@@ -19,14 +19,13 @@ Launcher file `C:\Users\<account>\wallet-server.cmd` (outside the repo; start fr
 | Var | Default | Notes |
 |---|---|---|
 | `FRONY_SERVICE_KEY` | — (required) | no fallback — start-up exits if missing |
-| `FRONY_GRANT_KEY` | — | required only if the policy has a `require_grant` key; must match FronyShopping's copy — see [pay-grant](pay-grant.md) |
+| `FRONY_GRANT_KEY` | — | required to fill any key registered with the vault's `grant` flag; must match the issuing service's copy — see [pay-grant](pay-grant.md) |
 | `WALLET_BIND` | `tailscale ip -4`, else `127.0.0.1` | rejected at start-up unless loopback or `100.64.0.0/10` |
 | `WALLET_PORT` | `9420` | |
-| `WALLET_DATA_DIR` | `%LOCALAPPDATA%\Frony\FronyBrowser\data` | see [data-model](data-model.md) |
-| `WALLET_POLICY` | `<WALLET_DATA_DIR>\policy.toml` | copy `config/policy.example.toml` there on first install; the file is not in the repo |
+| `WALLET_DATA_DIR` | `%LOCALAPPDATA%\Frony\FronyBrowser\data` | holds `vault.dpapi`, `sessions/*.dpapi`, `audit.jsonl`, `test-mode.json` |
 | `FRONY_AUTH_URL` | — (required) | FronyAuth introspection endpoint |
 | `FRONY_AUTH_ISSUER` | — (required) | FronyAuth public origin, published as `authorization_servers` in the OAuth metadata (FWL-040) |
-| `WALLET_ADMIN_CLIENTS` | (empty) | comma-separated caller ids allowed on `/vault/*` via device key |
+| `WALLET_ADMIN_CLIENTS` | (empty) | comma-separated caller ids allowed on `/vault/*` via device key. Keep the agents' own device keys **out** of it — a key that reaches `/mcp` and `/vault/grant` alike lets an agent clear its own grant requirement. This server holds `key:gpu-wallet-deploy` only (2026-09-12); the console's own login session is the normal admin path and is unaffected |
 | `WALLET_SESSION_TTL` | `15m` | browser session idle TTL; every action extends it. The expiry sweep runs every `min(60s, TTL/5)` (FWL-036). The GPU server runs `30m` (2026-09-08 decided, was `40m` for a day): the same length as the consumer's 30-minute transaction, so an idle session and its transaction expire together |
 | `WALLET_MAX_SESSIONS` | `4` | concurrent sessions across all clients; beyond it `session_begin` returns `session_limit` |
 | `WALLET_BROWSER_IDLE` | `5m` | a launched browser (headful Chrome window included) is closed this long after its last session context closes; the next session relaunches it |
@@ -53,11 +52,11 @@ scripts\deploy.ps1 -Tag vX.Y.Z
 
 ## Restart and health
 
-Restart: `scripts\deploy.ps1` (no `-Tag`), or `schtasks /End` + `schtasks /Run` on **"FronyBrowser Server"** directly. Health: `GET /health` → `{ ok, vaultLocked, vaultExists, vaultTtlMs }` (no auth required). The vault is always locked immediately after a restart; unlock with `wallet unlock` (needs `WALLET_SERVER`, `FRONY_KEY`, and admin membership).
+Restart: `scripts\deploy.ps1` (no `-Tag`), or `schtasks /End` + `schtasks /Run` on **"FronyBrowser Server"** directly. Health: `GET /health` → `{ ok, vaultLocked, vaultExists, vaultTtlMs }` (no auth required). A deploy restart comes back unlocked through the handoff below; a crash or reboot does not, and needs `wallet unlock` (`WALLET_SERVER`, `FRONY_KEY`, and admin membership).
 
-Dry run: `wallet status` (run on the server machine) prints `dry-run: off` or a warning when `<data root>/dry-run.json` says on, and adds the vault state from `/health` when `WALLET_SERVER` is set; `main.ts` also logs a `★ DRY RUN` warning at start-up. Do not leave it on after a rehearsal — every grant-gated fill is silently skipped while it is on ([pay-grant](pay-grant.md#dry-run)).
+Test Mode: `wallet status` (run on the server machine) prints the flag from `<data root>/test-mode.json` and adds the vault state from `/health` when `WALLET_SERVER` is set; `main.ts` also warns at start-up and the console shows a badge. `/health` deliberately does not carry it — agents read that route. Do not leave it on after a rehearsal: every grant-gated fill is silently skipped while it is on, and the response looks exactly like a real one, so a live purchase run would submit an empty PIN field.
 
-Four things to keep in mind operationally (all from [architecture](architecture.md#decisions) and the code):
+Four things to keep in mind operationally:
 
 - **DPAPI is per-account.** The account that ran `wallet set` and the account the service runs as must be the same Windows account, or decryption silently fails. Do not run this service as `SYSTEM`.
 - **Two-layer protection.** DPAPI guards data at rest; the unlock passphrase (TTL `WALLET_UNLOCK_TTL`) guards it in memory. A long TTL trades that second layer for less manual intervention. The deploy handoff (FWL-042) is the one exception: for the restart window only, the passphrase sits in `unlock-handoff.dpapi` under DPAPI alone; the file is deleted on the next start-up and ignored after 10 minutes. A crash or reboot writes no handoff, so those still need `wallet unlock`.
@@ -85,26 +84,22 @@ tailscale funnel status
 
 ## Onboarding a platform
 
-Decided 2026-09-06 (FWL-041): any origin can be opened and read, but a vault value leaves this server only for an
-origin listed under that key's `allow_origins`, and only platforms the operator has onboarded have such entries.
-Customers fill vault values; platform facts (origins, login marker, browser profile, PG origins, playbook) are the
-operator's work and there is no UI for them. Steps, on the server machine:
+Since FWL-055 there is nothing per-origin to register on this server. A site the server has never seen works as
+soon as its values are in the vault; the origin, the browser profile, the keypad selectors and the amount check all
+arrive per call from the calling service. Steps, on the server machine:
 
-1. **Sign up as a human** on the site. No seeding is required (FWL-045, 2026-09-07 decided): the agent logs in itself
-   with the vault login keys the first time, and `session_end(loggedIn=true)` creates `sessions/<slug>.dpapi` for the
-   origin, which every later `session_begin` injects and every later `loggedIn=true` end refreshes.
-2. **Origin block** in the policy file: `[origins."https://<host>"]` with `label`, and `browser` / `headless` if the
-   site blocks the default profile (a site behind a bot manager: system Chrome, headful). No login marker is configured here: `session_begin`
-   reports `storedLogin` (whether a stored context was injected) and the agent judges the actual login state from the page.
-3. **Keys**: add the origin to `allow_origins` of `profile.email`, `profile.phone`, `profile.address` and, for a form login, create
-   `<site>.login.id` / `<site>.login.password` (password bound to `input[type='password']`). Vault values:
-   `wallet set <key> --type <type>` on the server, under the service account.
-4. **PG origins** for the card keys (`card.personal.number|expiry|cvv|password2`) and a payment PIN key are never
-   guessed: run the payment-method registration or the first purchase, read the `policy_denied {key, origin}` line in the
-   audit log, add exactly that origin, restart. A PIN key gets `require_grant = true`.
-5. Restart the task, then the FronyShopping side: `platform add`, the playbook, and a scrubbed capture under its
-   `docs/sites/<id>/` (project-shop `docs/operations.md`, "Onboarding a platform").
+1. **Sign up as a human** on the site. No seeding is required (FWL-045): the agent logs in itself with the vault
+   login keys the first time, and `session_end(loggedIn=true)` creates `sessions/<slug>.dpapi` for the origin, which
+   every later `session_begin` injects and every later `loggedIn=true` end refreshes.
+2. **Register the values** the site needs — for a form login `<site>.login.id` / `<site>.login.password`, and a
+   payment PIN key if it has one. Console, or `wallet set <key> --type <type>` on the server under the service
+   account. Every key is `group.subject.field` (FWL-057).
+3. **Tick `grant` on the payment keys** in the console. That is the only per-key rule left, and it is what stops a
+   payment PIN being filled outside a checkout the calling service vouched for.
+4. Then the FronyShopping side: `platform add`, the playbook, and a scrubbed capture under its `docs/sites/<id>/`
+   (project-shop `docs/operations.md`, "Onboarding a platform"). The browser profile and the keypad selectors for
+   this site live there, not here.
 
 ## Backup
 
-Not automated in code. The files that matter are `vault.dpapi` and `sessions/*.dpapi` under the data root; `policy.toml` under the data root holds no secrets but is not in the repo either — back it up with the data root. A copy of the data root is only usable if restored under the same Windows account and DPAPI is per-account, so a raw file backup does not survive an account or machine change without re-registering the vault.
+Not automated in code. The files that matter are `vault.dpapi` and `sessions/*.dpapi` under the data root. A copy of the data root is only usable if restored under the same Windows account and DPAPI is per-account, so a raw file backup does not survive an account or machine change without re-registering the vault.

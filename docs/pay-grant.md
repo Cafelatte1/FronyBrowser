@@ -1,20 +1,23 @@
 # Pay grant contract (FWL-022)
 
-**When to read**: when changing `require_grant` handling, the grant token format, or integrating a caller that issues grants
+**When to read**: when changing the grant token format, or integrating a caller that issues grants
 **Code**: `backend/core/src/grant.ts`, `backend/api/src/handlers/impl.ts` (`fill`)
-**Related**: [architecture](architecture.md#absolute-rules), [data-model](data-model.md#schemas)
+**Related**: [operations](operations.md)
+
+The issuer lives in another repo and has to match this byte for byte, which is why this document exists. Everything
+else about grants is in the code.
 
 ---
 
 A key to an irreversible action — a payment password — is never filled without proof that the payment is a legitimate transaction. That proof is the pay grant.
 
-Wallet does not decide what to buy or whether the price is right ([architecture](architecture.md) rule 7 / the "no business logic" premise). That judgment is made by FronyShopping as it passes `open_transaction` → `identify_item` → `check_cart`, and the pay grant hands that verdict to wallet as **one signed token**. The two servers never call each other — they share one symmetric key (`FRONY_GRANT_KEY`), and the token travels through the agent's hands. Even if the agent is prompt-injected, it cannot forge the signature, so passing the token through it is not itself a risk.
+Wallet does not decide what to buy or whether the price is right — it holds no business logic. That judgment is made by FronyShopping as it passes `open_transaction` → `identify_item` → `check_cart`, and the pay grant hands that verdict to wallet as **one signed token**. The two servers never call each other — they share one symmetric key (`FRONY_GRANT_KEY`), and the token travels through the agent's hands. Even if the agent is prompt-injected, it cannot forge the signature, so passing the token through it is not itself a risk.
 
 | Role | Who |
 |---|---|
 | Issue | the grant issuer — the calling service that owns the purchase decision; currently FronyShopping `begin_checkout` (only after `check_cart` passes, for the same session) |
 | Carry | the agent (passed as-is in `fill`'s `grant` argument) |
-| Verify | FronyBrowser `fill`, only for keys with `require_grant = true` (`backend/core/src/grant.ts`) |
+| Verify | FronyBrowser `fill`, only for keys carrying the vault's `grant` flag (`backend/core/src/grant.ts`) |
 
 ## Token format
 
@@ -70,33 +73,35 @@ Three layers of defense: **signature** (forgery), **`exp` 300s** (replay window)
 | `grant_required` | key requires a grant but no `grant` argument was given | false |
 | `grant_invalid` | the grant was rejected for any of reasons 1–6 above | false |
 
-**Which step failed is never told to the caller.** The reason (`malformed`/`bad_signature`/`expired`/`session_mismatch`/`reused`/`no_grant_key`) is recorded only in the audit log's `grant_denied` event's `reason` field — this avoids giving a caller a way to refine and retry a forged token (see [logging](logging.md#events)).
+**Which step failed is never told to the caller.** The reason (`malformed`/`bad_signature`/`expired`/`session_mismatch`/`reused`/`no_grant_key`) is recorded only in the audit log's `grant_denied` event's `reason` field — this avoids giving a caller a way to refine and retry a forged token.
 
 The audit log never records the token itself (rule 5). A successful fill that consumed a grant carries only a `grant: true` field.
 
 ## Sprite keypads
 
-One simple-pay PIN keypad (inside the provider's iframe) has no digit anywhere in the DOM: each key is `<a class="pad-key" data-key="N">` showing one 25×26 cell of a per-session sprite PNG, and the shuffle is baked into that PNG. `keypad_digit_resolver = "sprite-template"` handles it (FWL-038): the browser adapter reads the computed `background-image` data URL and `background-position` of every `keypad_cell_selector` element under `keypad_key_selector`, and `backend/core/src/keypad-sprite.ts` crops each cell to its alpha bounding box and compares it byte-for-byte with the glyph templates in `keypad-glyphs.ts` (generated from a captured sprite; a second capture from another session matches exactly, see `backend/test/unit/core/keypad-sprite.test.ts`). The fill then clicks the keys in PIN order.
+One simple-pay PIN keypad (inside the provider's iframe) has no digit anywhere in the DOM: each key is `<a class="pad-key" data-key="N">` showing one 25×26 cell of a per-session sprite PNG, and the shuffle is baked into that PNG. The caller passes `keypad: { keySelector, cellSelector, resolver: "sprite-template" }` on `fill` (FWL-038, selectors moved caller-side in FWL-055): the browser adapter reads the computed `background-image` data URL and `background-position` of every `cellSelector` element under `keySelector`, and `backend/core/src/keypad-sprite.ts` crops each cell to its alpha bounding box and compares it byte-for-byte with the glyph templates in `keypad-glyphs.ts` (generated from a captured sprite; a second capture from another session matches exactly, see `backend/test/unit/core/keypad-sprite.test.ts`). The fill then clicks the keys in PIN order.
 
 Fail-closed: not exactly ten cells, more than one sprite image, a cell matching zero or several templates, the same digit twice, or a key count that changes between resolving and clicking → `keypad_unresolved` (not retriable) and nothing is clicked. No sprite, cell, or resolved digit leaves the process; the audit `fill` record carries only `mode: keypad`, `resolver` and `len`. A changed glyph set on the site means a new capture and regenerated templates, never approximate matching.
 
-## Dry run
+## Test Mode and the issuer
 
-A runtime switch for rehearsing a checkout end to end without paying. It is **not** a policy flag: it is toggled from the registration GUI header (`/admin/dry-run`, GUI session only) and persisted as `<data root>/dry-run.json`, so it survives a restart. `main.ts` logs a warning at start-up and `wallet status` warns while it is on.
+Test Mode (FWL-035, renamed in FWL-056) rehearses a checkout without paying. It is a runtime switch on this server,
+toggled from the console and persisted across restarts — not a policy flag and not something the token carries.
 
-While on, `fill` on a `require_grant` key still runs every check above and **consumes the grant**, but the driver receives no keystrokes and no keypad clicks; the response is identical to a real fill (`{ ok, filledFrom, len }`, no dry marker) and only the audit `fill` record carries `dry: true`. Keys without `require_grant` are unaffected. Grant tokens carry no dry flag and the setting is global, not per key. The agent therefore reaches the payment frame with the PIN field empty, verifies the flow, and ends the run with `abort_transaction` — nothing is charged. Recipe in [testing](testing.md#dry-run-rehearsal).
+What the issuer has to know: while it is on, a `fill` on a grant-flagged key still runs every check above and
+**consumes the grant**, but nothing is typed. The response is identical to a real fill, deliberately, so the agent
+cannot tell. The PIN field therefore reaches the payment step empty and the run should end with the issuer's own
+abort path, not a payment. Grants carry no test flag and the switch is global, never per key.
 
-## Policy and operations
+## Operations
 
-Setting `require_grant = true` on a policy key means that key is never filled without a grant.
+The `grant` flag is per vault key, set in the console (FWL-055 retired the policy file that used to carry it). A key
+with the flag on is never filled without a grant.
 
-```toml
-[keys."example-shop.payment.pinnumber"]
-type          = "text"
-allow_origins = ["https://www.example-shop.com"]
-require_grant = true
-```
-
-- If the policy has **any** `require_grant` key and `FRONY_GRANT_KEY` is unset, the server **refuses to start** (`backend/api/src/main.ts`). Starting anyway would mean either "reject every grant" or, in the worst case, "skip verification" — neither may happen silently.
-- **Both launchers must hold the same `FRONY_GRANT_KEY`** — FronyBrowser (`9420`) and FronyShopping (`9430`) are separate processes on the same home server, so the value is set independently in each launcher script. Changing the key means updating both launchers and restarting both servers together; updating only one turns every issued token into a `bad_signature`, which only surfaces at the payment step.
-- The key is a shared secret and is never committed to the repo — it lives only in the launcher files.
+- If `FRONY_GRANT_KEY` is unset, every grant-flagged fill fails closed with `grant_invalid`, and the server warns at
+  start-up. It never silently skips verification.
+- **Both launchers must hold the same `FRONY_GRANT_KEY`.** FronyBrowser (`9420`) and the issuing service (`9430`) are
+  separate processes on the same home server, so the value is set independently in each launcher script. Changing it
+  means updating both and restarting both together; updating only one turns every issued token into a
+  `bad_signature`, which surfaces only at the payment step.
+- The key is a shared secret and is never committed — it lives only in the launcher files.

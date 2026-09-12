@@ -2,7 +2,7 @@
 
 **When to read**: when changing how a request is authenticated or which channel serves it
 **Code**: `backend/api/src/auth.ts`, `backend/api/src/auth-admin.ts`, `backend/api/src/http/gui-session.ts`
-**Related**: [http-api](http-api.md), [operations](operations.md)
+**Related**: [operations](operations.md)
 
 ---
 
