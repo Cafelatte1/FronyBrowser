@@ -15,5 +15,4 @@ export * from './test-mode.js';
 export * from './unlock-handoff.js';
 export * from './keypad-sprite.js';
 export * from './keypad-glyphs.js';
-export * from './keypad-sprite.js';
 export * from './paths.js';

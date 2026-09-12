@@ -182,17 +182,17 @@ describe('/vault/* 인증', () => {
     // 첫 저장 전: 금고 파일이 없다 — 헤더가 "미생성"을 보여줄 근거
     const before = (await (await fetch(`${baseUrl}/health`)).json()) as Record<string, unknown>;
     expect(before).toMatchObject({ vaultExists: false, vaultLocked: true, vaultTtlMs: 0, local: false });
-    const set = await post('/vault/set', { passphrase: 'pp', key: 'phone', type: 'phone', value: '01012345678' }, token);
+    const set = await post('/vault/set', { passphrase: 'pp', key: 'profile.personal.phone', type: 'phone', value: '01012345678' }, token);
     expect(set.status).toBe(200);
-    expect(set.body).toMatchObject({ ok: true, key: 'phone', len: 11, grant: false });
+    expect(set.body).toMatchObject({ ok: true, key: 'profile.personal.phone', len: 11, grant: false });
     expect(JSON.stringify(set.body)).not.toContain('01012345678');
 
     const list = await post('/vault/list', { passphrase: 'pp' }, token);
-    expect(list.body['keys']).toContainEqual({ name: 'phone', type: 'phone', len: 11, grant: false, label: 'Phone' });
+    expect(list.body['keys']).toContainEqual({ name: 'profile.personal.phone', type: 'phone', len: 11, grant: false, label: 'Mobile' });
     expect(JSON.stringify(list.body)).not.toContain('01012345678');
 
     const setLog = audit.records.find((r) => r.evt === 'vault_set');
-    expect(setLog).toMatchObject({ client: 'admin:admin', key: 'phone', ok: true });
+    expect(setLog).toMatchObject({ client: 'admin:admin', key: 'profile.personal.phone', ok: true });
     expect(JSON.stringify(setLog)).not.toContain('01012345678');
 
     // 저장 후 unlock → health가 열림 상태와 잔여 TTL을 보고한다
@@ -218,7 +218,7 @@ describe('/vault/* 인증', () => {
 
   it('틀린 패스프레이즈는 403 — 계정 불일치와 구분해 주지 않는다', async () => {
     const token = await login();
-    const r = await post('/vault/set', { passphrase: 'wrong', key: 'y', type: 'text', value: 'v' }, token);
+    const r = await post('/vault/set', { passphrase: 'wrong', key: 'a.b.c', type: 'text', value: 'v' }, token);
     expect(r.status).toBe(403);
     expect((r.body['error'] as { code: string }).code).toBe('vault_locked');
   });
@@ -227,50 +227,50 @@ describe('/vault/* 인증', () => {
     const token = await login();
     for (const body of [
       { passphrase: 'pp', key: '{{vault:x}}', type: 'text', value: 'v' },
-      { passphrase: 'pp', key: 'k', type: 'password', value: 'v' },
-      { passphrase: 'pp', key: 'k', type: 'text', value: '' },
-      { passphrase: 'pp', entries: [{ key: 'k', type: 'text' }] },
-      { passphrase: 'pp', entries: [{ key: 'ok', type: 'text', value: 'v' }, { key: 'k', type: 'nope', value: 'v' }] }, // 하나라도 틀리면 전부 거부
+      { passphrase: 'pp', key: 'a.b.c', type: 'password', value: 'v' },
+      { passphrase: 'pp', key: 'a.b.c', type: 'text', value: '' },
+      { passphrase: 'pp', entries: [{ key: 'a.b.c', type: 'text' }] },
+      { passphrase: 'pp', entries: [{ key: 'a.b.ok', type: 'text', value: 'v' }, { key: 'a.b.c', type: 'nope', value: 'v' }] }, // 하나라도 틀리면 전부 거부
     ]) {
       expect((await post('/vault/set', body, token)).status).toBe(400);
     }
-    expect((await post('/vault/list', { passphrase: 'pp' }, token)).body['keys']).not.toContainEqual(expect.objectContaining({ name: 'ok' }));
+    expect((await post('/vault/list', { passphrase: 'pp' }, token)).body['keys']).not.toContainEqual(expect.objectContaining({ name: 'a.b.ok' }));
   });
 
   it('entries[]로 여러 키를 한 번에 저장한다 — 응답에 값 없음, 키마다 vault_set 감사', async () => {
     const token = await login();
-    const r = await post('/vault/set', { passphrase: 'pp', entries: [{ key: 'b.one', type: 'text', value: 'v1' }, { key: 'b.two', type: 'text', value: 'value2' }] }, token);
+    const r = await post('/vault/set', { passphrase: 'pp', entries: [{ key: 'b.c.one', type: 'text', value: 'v1' }, { key: 'b.c.two', type: 'text', value: 'value2' }] }, token);
     expect(r.status).toBe(200);
-    expect(r.body).toMatchObject({ ok: true, keys: [{ key: 'b.one', type: 'text', len: 2, grant: false }, { key: 'b.two', type: 'text', len: 6, grant: false }] });
+    expect(r.body).toMatchObject({ ok: true, keys: [{ key: 'b.c.one', type: 'text', len: 2, grant: false }, { key: 'b.c.two', type: 'text', len: 6, grant: false }] });
     expect(JSON.stringify(r.body)).not.toContain('value2');
-    expect(audit.records.filter((x) => x.evt === 'vault_set' && (x.key === 'b.one' || x.key === 'b.two') && x.ok === true)).toHaveLength(2);
+    expect(audit.records.filter((x) => x.evt === 'vault_set' && (x.key === 'b.c.one' || x.key === 'b.c.two') && x.ok === true)).toHaveLength(2);
     const list = await post('/vault/list', { passphrase: 'pp' }, token);
-    expect(list.body['keys']).toContainEqual({ name: 'b.two', type: 'text', len: 6, grant: false, label: 'Two' });
+    expect(list.body['keys']).toContainEqual({ name: 'b.c.two', type: 'text', len: 6, grant: false, label: 'Two' });
   });
 
   it('grant 플래그 — 저장한 대로 목록에 실리고, boolean이 아니면 400', async () => {
     const token = await login();
-    const set = await post('/vault/set', { passphrase: 'pp', key: 'g.pin', type: 'text', value: '1234', grant: true }, token);
+    const set = await post('/vault/set', { passphrase: 'pp', key: 'g.h.pin', type: 'text', value: '1234', grant: true }, token);
     expect(set.status).toBe(200);
-    expect(set.body).toMatchObject({ ok: true, key: 'g.pin', grant: true });
+    expect(set.body).toMatchObject({ ok: true, key: 'g.h.pin', grant: true });
     const list = await post('/vault/list', { passphrase: 'pp' }, token);
-    expect(list.body['keys']).toContainEqual({ name: 'g.pin', type: 'text', len: 4, grant: true, label: 'Pin' });
-    const bad = await post('/vault/set', { passphrase: 'pp', entries: [{ key: 'g.bad', type: 'text', value: 'v', grant: 'yes' }] }, token);
+    expect(list.body['keys']).toContainEqual({ name: 'g.h.pin', type: 'text', len: 4, grant: true, label: 'Pin' });
+    const bad = await post('/vault/set', { passphrase: 'pp', entries: [{ key: 'g.h.bad', type: 'text', value: 'v', grant: 'yes' }] }, token);
     expect(bad.status).toBe(400);
   });
 
   it('rm — 있으면 200, 없으면 404', async () => {
     const token = await login();
-    await post('/vault/set', { passphrase: 'pp', key: 'tmp.key', type: 'text', value: 'v' }, token);
-    expect((await post('/vault/rm', { passphrase: 'pp', key: 'tmp.key' }, token)).status).toBe(200);
-    expect((await post('/vault/rm', { passphrase: 'pp', key: 'tmp.key' }, token)).status).toBe(404);
+    await post('/vault/set', { passphrase: 'pp', key: 'tmp.k.key', type: 'text', value: 'v' }, token);
+    expect((await post('/vault/rm', { passphrase: 'pp', key: 'tmp.k.key' }, token)).status).toBe(200);
+    expect((await post('/vault/rm', { passphrase: 'pp', key: 'tmp.k.key' }, token)).status).toBe(404);
   });
 
   it('금고가 열려 있으면 set이 메모리도 갱신한다 — 스크러버가 새 값을 알아야 한다', async () => {
     const token = await login();
     await vault.unlock('pp');
-    await post('/vault/set', { passphrase: 'pp', key: 'email', type: 'email', value: 'me@x.com' }, token);
-    expect(vault.get('email')?.value).toBe('me@x.com');
+    await post('/vault/set', { passphrase: 'pp', key: 'profile.personal.email', type: 'email', value: 'me@x.com' }, token);
+    expect(vault.get('profile.personal.email')?.value).toBe('me@x.com');
     vault.lock();
   });
 });
@@ -284,7 +284,7 @@ describe('/vault/handoff (FWL-042)', () => {
     expect(audit.records.find((r) => r.evt === 'vault_handoff' && r.client === 'service:self')).toBeDefined();
     // 금고를 여는 것도 값을 쓰는 것도 이 키로는 안 된다
     expect((await post('/vault/unlock', { passphrase: 'pp' }, 'frony_service_self')).status).toBe(401);
-    expect((await post('/vault/set', { passphrase: 'pp', key: 'x.y', type: 'text', value: 'v' }, 'frony_service_self')).status).toBe(401);
+    expect((await post('/vault/set', { passphrase: 'pp', key: 'x.y.z', type: 'text', value: 'v' }, 'frony_service_self')).status).toBe(401);
     vault.lock();
   });
 

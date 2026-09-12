@@ -259,8 +259,12 @@ export function createHandlers(deps: HandlerDeps) {
       if (!found.ok) return found;
       const target = targetOf(found.session);
       let origin: string;
+      let logged: string;
       try {
-        origin = new URL(url).origin;
+        const u = new URL(url);
+        origin = u.origin;
+        // 감사에는 쿼리를 빼고 남긴다 — 쿼리에 토큰이 실릴 수 있다
+        logged = `${u.origin}${u.pathname}`;
       } catch {
         // 에이전트가 잘못된 URL을 낸 것도 재구성에 필요하다 (FWL-030) — origin은 없으니 null
         audit.append({ evt: 'action_failed', ...baseAudit(found.session, caller), origin: null, kind: 'navigate', code: 'navigation_failed' });
@@ -274,7 +278,7 @@ export function createHandlers(deps: HandlerDeps) {
       }
       try {
         const r = await target.act(id, { kind: 'navigate', url });
-        audit.append({ evt: 'navigate', ...baseAudit(found.session, caller), origin, url });
+        audit.append({ evt: 'navigate', ...baseAudit(found.session, caller), origin, url: logged });
         return { ok: true, url: r.url };
       } catch (e) {
         const f = toFailure(e);
@@ -530,11 +534,6 @@ export function createHandlers(deps: HandlerDeps) {
       writeUnlockHandoff(deps.handoffFile, { passphrase, unlockedUntil: Date.now() + remainingMs, issuedAt: Date.now() }, deps.handoffCipher);
       audit.append({ evt: 'vault_handoff', sid: null, client: caller.client, traceId: null, origin: null, ok: true, remainingMs });
       return { ok: true, remainingMs };
-    },
-
-    /** v2 — 승인 채널이 생기면 구현한다. 계약만 v1에 존재한다 */
-    async approval_wait(): Promise<Result<never>> {
-      return fail('approval_expired', 'approval channel not available in v1');
     },
   };
 }

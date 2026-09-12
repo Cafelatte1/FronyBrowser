@@ -21,7 +21,6 @@ export const HANDLERS = [
   'vault_list',
   'vault_unlock',   // admin 전용·MCP 미노출 (8.4)
   'vault_handoff',  // admin 전용·MCP 미노출 — 배포 재시작을 넘기는 unlock 인계 (FWL-042)
-  'approval_wait',  // v2
 ] as const;
 
 export type HandlerName = (typeof HANDLERS)[number];

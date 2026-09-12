@@ -3,11 +3,11 @@
  * DPAPI는 가짜 cipher로 대체한다.
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
-import { createMemoryAudit, createVault, overviewVaultFile } from '@wallet/core';
+import { createMemoryAudit, createVault, overviewVaultFile, setVaultEntry } from '@wallet/core';
 import { createVaultAdmin } from '@wallet/api';
 import { fakeCipher } from '../../helpers/fakes.js';
 
@@ -61,7 +61,7 @@ describe('create — 있는 금고를 덮어쓰지 않는다', () => {
 describe('reset — 마스터 비밀번호 분실용', () => {
   it('금고 파일과 세션 파일을 지우고 메모리를 잠근다. 없는 파일은 에러가 아니다', async () => {
     const { admin, vault, vaultFile, sessionsDir } = setup('reset');
-    expect((await admin.set(caller, 'pp', 'phone', 'phone', '01012345678')).ok).toBe(true);
+    expect((await admin.set(caller, 'pp', 'profile.personal.phone', 'phone', '01012345678')).ok).toBe(true);
     await vault.unlock('pp');
     mkdirSync(sessionsDir, { recursive: true });
     writeFileSync(join(sessionsDir, 'shop.com.json'), 'encrypted', 'utf8');
@@ -109,29 +109,50 @@ describe('열린 금고 — 파일을 다시 복호화하지 않는다 (FWL-058)
   });
 });
 
-describe('rmGroup — 그룹 하나를 통째로 지운다', () => {
-  it('첫 조각이 같은 키만 사라지고 나머지는 그대로다. 빈 그룹은 key_not_found', async () => {
-    const { admin, vaultFile } = setup('rm-group');
+describe('rmKeys — 지목한 키만 지운다', () => {
+  it('이름을 댄 두 키만 사라지고 나머지는 그대로다. 같은 호출을 한 번 더 하면 key_not_found', async () => {
+    const { admin, vaultFile } = setup('rm-keys');
     expect((await admin.set(caller, 'pp', 'kurly.login.id', 'text', 'me@example.com')).ok).toBe(true);
     expect((await admin.set(caller, 'pp', 'kurly.payment.pin', 'text', '1234', true)).ok).toBe(true);
     expect((await admin.set(caller, 'pp', 'card.personal.number', 'card', '1111222233334444')).ok).toBe(true);
 
-    const r = await admin.rmGroup(caller, 'pp', 'kurly');
+    const r = await admin.rmKeys(caller, 'pp', ['kurly.login.id', 'kurly.payment.pin']);
     if (!r.ok) throw new Error('should succeed');
     expect(r.removed).toEqual(['kurly.login.id', 'kurly.payment.pin']);
     expect(overviewVaultFile(vaultFile, 'pp', fakeCipher).map((k) => k.name)).toEqual(['card.personal.number']);
 
-    const again = await admin.rmGroup(caller, 'pp', 'kurly');
+    const again = await admin.rmKeys(caller, 'pp', ['kurly.login.id', 'kurly.payment.pin']);
     if (again.ok) throw new Error('should fail');
     expect(again.error.code).toBe('key_not_found');
   });
 
-  it('첫 조각이 접두사로만 겹치는 그룹은 건드리지 않는다', async () => {
-    const { admin, vaultFile } = setup('rm-group-prefix');
+  it('있는 키와 없는 키를 섞어 보내면 있는 것만 지우고 그것만 removed에 담는다', async () => {
+    const { admin, vaultFile } = setup('rm-keys-partial');
     expect((await admin.set(caller, 'pp', 'shop.login.id', 'text', 'a')).ok).toBe(true);
-    expect((await admin.set(caller, 'pp', 'shopping.login.id', 'text', 'b')).ok).toBe(true);
+    expect((await admin.set(caller, 'pp', 'shop.login.password', 'text', 'b')).ok).toBe(true);
 
-    expect((await admin.rmGroup(caller, 'pp', 'shop')).ok).toBe(true);
-    expect(overviewVaultFile(vaultFile, 'pp', fakeCipher).map((k) => k.name)).toEqual(['shopping.login.id']);
+    const r = await admin.rmKeys(caller, 'pp', ['shop.login.id', 'shop.login.nosuch']);
+    if (!r.ok) throw new Error('should succeed');
+    expect(r.removed).toEqual(['shop.login.id']);
+    expect(overviewVaultFile(vaultFile, 'pp', fakeCipher).map((k) => k.name)).toEqual(['shop.login.password']);
+  });
+});
+
+describe('서버 밖에서 파일이 바뀐 경우 (FWL-058)', () => {
+  it('CLI가 직접 쓴 키를 콘솔의 grant 토글이 되돌리지 않는다', async () => {
+    const { admin, vault, vaultFile } = setup('stale-memory');
+    expect((await admin.set(caller, 'pp', 'shop.payment.pinnumber', 'text', '1234')).ok).toBe(true);
+    await vault.unlock('pp');
+
+    // CLI가 하는 일 — 서버를 거치지 않고 금고 파일을 직접 고친다
+    setVaultEntry(vaultFile, 'pp', 'shop.login.id', { type: 'text', value: 'me@example.com', grant: false, label: 'ID' }, fakeCipher);
+    // 파일시스템 타임스탬프 해상도가 낮으면 두 쓰기의 mtime이 같아진다 — 밖에서 바뀐 사실만 재현하면 된다
+    const bumped = new Date(statSync(vaultFile).mtimeMs + 2_000);
+    utimesSync(vaultFile, bumped, bumped);
+
+    expect((await admin.grant(caller, 'pp', 'shop.payment.pinnumber', true)).ok).toBe(true);
+    expect(overviewVaultFile(vaultFile, 'pp', fakeCipher).map((k) => k.name).sort()).toEqual([
+      'shop.login.id', 'shop.payment.pinnumber',
+    ]);
   });
 });

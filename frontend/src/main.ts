@@ -469,7 +469,8 @@ $('btn-del-group').addEventListener('click', () => {
       : `Delete ${group} and the ${stored.length} ${stored.length === 1 ? 'value' : 'values'} stored under it? The values are gone for good.`;
     if (!confirm(what)) return;
     try {
-      if (stored.length > 0) await api('/vault/rm-group', { group });
+      // 키를 명시해 보낸다 — 다이얼로그가 센 목록과 실제로 지워지는 목록이 같아야 한다
+      if (stored.length > 0) await api('/vault/rm-keys', { keys: stored });
       newGroups.delete(group);
       pendingRows.delete(group);
       for (const k of stored) draft.delete(k);
@@ -654,7 +655,7 @@ function openDialog(kind: Dlg): void {
     action = 'Turn on';
   } else if (kind === 'testOff') {
     title = 'Leave Test Mode?';
-    body = 'The next run pays for real, with every key the policy allows — including the ones you were holding back.';
+    body = 'The next run pays for real. Every key fills for real, including the ones you were holding back.';
     action = 'Go live';
   } else if (kind === 'grantOff') {
     title = 'Stop requiring a pay grant?';

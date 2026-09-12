@@ -18,8 +18,8 @@ import type { FakeTargetOptions } from '../../helpers/fakes.js';
 const GRANT_KEY = 'test-grant-key';
 
 const ENTRIES = {
-  phone: { type: 'phone', value: '01012345678', grant: false, label: 'Mobile' },
-  'card.number': { type: 'card', value: '1234567812345678', grant: false, label: 'Card number' },
+  'profile.personal.phone': { type: 'phone', value: '01012345678', grant: false, label: 'Mobile' },
+  'card.personal.number': { type: 'card', value: '1234567812345678', grant: false, label: 'Card number' },
   'shop.payment.pinnumber': { type: 'text', value: '1234', grant: true, label: 'Payment PIN' },
   'shop.keypad.pin': { type: 'text', value: '739105', grant: false, label: 'Pin' },
   'shop.keypad.broken': { type: 'text', value: 'ab-cd', grant: false, label: 'Broken' },
@@ -57,21 +57,21 @@ describe('fill', () => {
   it('플레이스홀더를 치환해 입력하고, 응답에는 키 이름과 길이만 담는다', async () => {
     const { handlers, audit, state } = setup();
     const sid = await begin(handlers);
-    const r = await handlers.fill(caller, sid, ref, '{{vault:phone}}');
-    expect(r).toEqual({ ok: true, filledFrom: 'phone', len: 11 });
+    const r = await handlers.fill(caller, sid, ref, '{{vault:profile.personal.phone}}');
+    expect(r).toEqual({ ok: true, filledFrom: 'profile.personal.phone', len: 11 });
     expect(state.filled[0]?.value).toBe('01012345678'); // 브라우저로는 실제 값
     const fillLog = audit.records.find((x) => x.evt === 'fill');
-    expect(fillLog).toMatchObject({ key: 'phone', len: 11, origin: 'https://shop.com' });
+    expect(fillLog).toMatchObject({ key: 'profile.personal.phone', len: 11, origin: 'https://shop.com' });
     expect(JSON.stringify(fillLog)).not.toContain('01012345678'); // 감사 로그에 값 없음 (규칙 5)
   });
 
   it('어느 프레임 origin이든 채운다 — origin 규칙 없음 (FWL-055)', async () => {
     const { handlers, audit, state } = setup({ frameOrigin: 'https://pay.pg.com' });
     const sid = await begin(handlers);
-    const r = await handlers.fill(caller, sid, ref, '{{vault:card.number}}');
-    expect(r).toEqual({ ok: true, filledFrom: 'card.number', len: 16 });
+    const r = await handlers.fill(caller, sid, ref, '{{vault:card.personal.number}}');
+    expect(r).toEqual({ ok: true, filledFrom: 'card.personal.number', len: 16 });
     expect(state.filled[0]?.value).toBe('1234567812345678');
-    expect(audit.records.find((x) => x.evt === 'fill')).toMatchObject({ key: 'card.number', origin: 'https://pay.pg.com' });
+    expect(audit.records.find((x) => x.evt === 'fill')).toMatchObject({ key: 'card.personal.number', origin: 'https://pay.pg.com' });
   });
 
   it('금고에 없는 키는 key_not_found + policy_denied(vault_missing)', async () => {
@@ -154,7 +154,7 @@ describe('fill + pay grant (FWL-022, 규칙 13)', () => {
   it('grant 플래그가 꺼진 키는 grant 없이 그대로 채워진다 — grant는 예외 경로다', async () => {
     const { handlers, audit } = setup();
     const sid = await begin(handlers);
-    expect((await handlers.fill(caller, sid, ref, '{{vault:phone}}')).ok).toBe(true);
+    expect((await handlers.fill(caller, sid, ref, '{{vault:profile.personal.phone}}')).ok).toBe(true);
     expect(audit.records.find((x) => x.evt === 'fill')).not.toHaveProperty('grant');
   });
 
@@ -219,7 +219,7 @@ describe('fill — 보안 키패드 (FWL-033)', () => {
     expect(fillLog).toMatchObject({ key: 'shop.keypad.sprite', mode: 'keypad', resolver: 'sprite-template', len: 4 });
     expect(JSON.stringify(fillLog)).not.toContain('4951');
     // 숫자 규칙은 스프라이트 키패드에도 같다
-    const bad = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.sprite}}{{vault:phone}}', undefined, SPRITE);
+    const bad = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.sprite}}{{vault:profile.personal.phone}}', undefined, SPRITE);
     if (bad.ok) throw new Error('should fail');
     expect(bad.error.code).toBe('bad_request');
   });
@@ -227,7 +227,7 @@ describe('fill — 보안 키패드 (FWL-033)', () => {
   it('text 키의 fill 감사에는 mode:text가 남는다', async () => {
     const { handlers, audit } = setup();
     const sid = await begin(handlers);
-    expect((await handlers.fill(caller, sid, ref, '{{vault:phone}}')).ok).toBe(true);
+    expect((await handlers.fill(caller, sid, ref, '{{vault:profile.personal.phone}}')).ok).toBe(true);
     expect(audit.records.find((x) => x.evt === 'fill')).toMatchObject({ mode: 'text' });
   });
 
@@ -246,7 +246,7 @@ describe('fill — 보안 키패드 (FWL-033)', () => {
   it('키패드에 여러 키를 이어붙이면 bad_request — 자릿수 대응이 없다', async () => {
     const { handlers, state } = setup();
     const sid = await begin(handlers);
-    const r = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.pin}}{{vault:phone}}', undefined, KEYPAD);
+    const r = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.pin}}{{vault:profile.personal.phone}}', undefined, KEYPAD);
     if (r.ok) throw new Error('should fail');
     expect(r.error.code).toBe('bad_request');
     expect(state.intents).toHaveLength(0);
@@ -330,7 +330,7 @@ describe('fill — Test Mode (FWL-035)', () => {
   it('grant가 필요 없는 키는 Test Mode와 무관하게 채워진다 — 스위치는 결제 키만 덮는다', async () => {
     const { handlers, audit, state } = setup({}, undefined, createMemoryTestMode(true));
     const sid = await begin(handlers);
-    expect((await handlers.fill(caller, sid, ref, '{{vault:phone}}')).ok).toBe(true);
+    expect((await handlers.fill(caller, sid, ref, '{{vault:profile.personal.phone}}')).ok).toBe(true);
     expect(state.filled[0]?.value).toBe('01012345678');
     expect(audit.records.find((x) => x.evt === 'fill')).not.toHaveProperty('dry');
   });
@@ -398,7 +398,7 @@ describe('세션 TTL', () => {
   it('sweep_expired — 금고 TTL 만료(열림→잠김)를 vault_lock 감사로 남긴다', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'wallet-handlers-'));
     const file = join(dir, 'vault.dpapi');
-    writeVaultFile(file, 'pp', new Map([['phone', { type: 'phone', value: '01012345678', grant: false, label: 'Mobile' }]]), fakeCipher);
+    writeVaultFile(file, 'pp', new Map([['profile.personal.phone', { type: 'phone', value: '01012345678', grant: false, label: 'Mobile' }]]), fakeCipher);
     let t = 0;
     const vault = createVault(file, { cipher: fakeCipher, ttlMs: 1_000, now: () => t });
     const audit = createMemoryAudit();
@@ -669,18 +669,18 @@ describe('감사 로그로 세션 재구성 (FWL-030)', () => {
 
 describe('fill — Test Mode 보류 키 (FWL-056)', () => {
   it('Test Mode가 켜져 있을 때만 key_held로 막는다 — 아무것도 입력하지 않고 감사에 policy_denied', async () => {
-    const on = setup({}, undefined, createMemoryTestMode(true, ['phone']));
+    const on = setup({}, undefined, createMemoryTestMode(true, ['profile.personal.phone']));
     const sid = await begin(on.handlers);
-    const r = await on.handlers.fill(caller, sid, ref, '{{vault:phone}}');
+    const r = await on.handlers.fill(caller, sid, ref, '{{vault:profile.personal.phone}}');
     if (r.ok) throw new Error('should fail');
     expect(r.error.code).toBe('key_held');
     expect(on.state.filled).toHaveLength(0);
-    expect(on.audit.records.find((x) => x.evt === 'policy_denied')).toMatchObject({ key: 'phone', rule: 'key_held' });
+    expect(on.audit.records.find((x) => x.evt === 'policy_denied')).toMatchObject({ key: 'profile.personal.phone', rule: 'key_held' });
 
     // 꺼져 있으면 같은 보류 목록이어도 평소대로 채운다
-    const off = setup({}, undefined, createMemoryTestMode(false, ['phone']));
+    const off = setup({}, undefined, createMemoryTestMode(false, ['profile.personal.phone']));
     const sid2 = await begin(off.handlers);
-    expect((await off.handlers.fill(caller, sid2, ref, '{{vault:phone}}')).ok).toBe(true);
+    expect((await off.handlers.fill(caller, sid2, ref, '{{vault:profile.personal.phone}}')).ok).toBe(true);
     expect(off.state.filled[0]?.value).toBe('01012345678');
   });
 });

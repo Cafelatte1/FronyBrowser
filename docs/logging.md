@@ -6,7 +6,7 @@
 
 ---
 
-This service does not use the shared Frony loguru JSON Lines spec (`template_logging-spec.md`); `audit.jsonl` has its own fixed, narrower field set because it is a security control, not a general event log — see [architecture](architecture.md#absolute-rules) rule 5 (never write a value).
+This service does not use the loguru JSON Lines logging the other Frony services share; `audit.jsonl` has its own fixed, narrower field set because it is a security control, not a general event log — see [architecture](architecture.md#absolute-rules) rule 5 (never write a value).
 
 ## Files and retention
 

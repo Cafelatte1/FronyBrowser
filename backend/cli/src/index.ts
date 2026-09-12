@@ -1,8 +1,8 @@
 /**
  * 금고 등록·삭제·목록·unlock.
  *
- *   wallet set <key> --type <card|phone|rrn|email|name|address|text> [--grant] [--label "<name>"]
- *   wallet rm <key>
+ *   wallet set <group.subject.field> --type <card|phone|rrn|email|name|address|text> [--grant] [--label "<name>"]
+ *   wallet rm <group.subject.field>
  *   wallet list
  *   wallet relabel            — 이름이 비어 있는 항목에 기본 이름을 지어 넣는다 (백업을 먼저 만든다, FWL-056)
  *   wallet migrate-keys       — 두 조각이던 옛 키 이름을 `그룹.대상.항목`으로 옮긴다 (백업을 먼저 만든다, FWL-057)
@@ -22,6 +22,8 @@ import { defaultDataDir, defaultLabelFor, migrateKeyNames, readTestModeFlag, rea
 import { promptHidden } from './prompt.js';
 
 const TYPES = ['card', 'phone', 'rrn', 'email', 'name', 'address', 'text'] as const;
+/** 키 이름은 `그룹.대상.항목` 세 조각 고정 (FWL-057) — 서버의 admin 핸들러와 같은 식이다 */
+const KEY_NAME = /^[a-z0-9-]+\.[a-z0-9-]+\.[a-z0-9-]+$/;
 
 function vaultPath(): string {
   const dir = defaultDataDir();
@@ -31,7 +33,7 @@ function vaultPath(): string {
 
 function usage(): never {
   console.error(
-    'usage: wallet set <key> --type <t> [--grant] [--label "<name>"] | wallet rm <key> | wallet list | wallet relabel | wallet migrate-keys | wallet unlock | wallet status',
+    'usage: wallet set <group.subject.field> --type <t> [--grant] [--label "<name>"] | wallet rm <group.subject.field> | wallet list | wallet relabel | wallet migrate-keys | wallet unlock | wallet handoff | wallet status',
   );
   console.error(`  types: ${TYPES.join(' ')}`);
   process.exit(2);
@@ -67,6 +69,10 @@ async function main(): Promise<void> {
     const typeIdx = rest.indexOf('--type');
     const type = typeIdx >= 0 ? rest[typeIdx + 1] : undefined;
     if (!type || !(TYPES as readonly string[]).includes(type)) usage();
+    if (!KEY_NAME.test(key)) {
+      console.error(`키 이름은 그룹.대상.항목 세 조각이어야 합니다 (소문자·숫자·하이픈): ${key}`);
+      process.exit(1);
+    }
     const grant = rest.includes('--grant');
     const labelIdx = rest.indexOf('--label');
     const labelArg = labelIdx >= 0 ? rest[labelIdx + 1]?.trim() : undefined;

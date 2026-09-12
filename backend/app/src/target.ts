@@ -143,8 +143,6 @@ export function createPlaywrightTarget(pool: BrowserPool, opts: PlaywrightTarget
         watchClose(p);
       });
       return { storedLogin };
-      return { storedLogin };
-      return { storedLogin };
     },
 
     async close(sessionId, closeOpts) {

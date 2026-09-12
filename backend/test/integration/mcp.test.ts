@@ -18,7 +18,7 @@ import { connectMcp } from '../helpers/mcp-client.js';
 
 const SECRET_PHONE = '01012345678';
 
-const vault = fakeVault({ entries: { phone: { type: 'phone', value: SECRET_PHONE, grant: false, label: 'Mobile' } } });
+const vault = fakeVault({ entries: { 'profile.personal.phone': { type: 'phone', value: SECRET_PHONE, grant: false, label: 'Mobile' } } });
 
 /** 페이지가 입력값을 본문에 되비추는 최악 케이스 — egress가 가려야 한다 */
 const { target } = fakeTarget({
@@ -49,7 +49,7 @@ beforeAll(async () => {
     audit,
     verify,
     adminClients: ['admin-box'],
-    vaultAdmin: createVaultAdmin({ vaultFile: join(tmpdir(), 'unused-vault.dpapi'), vault, audit }),
+    vaultAdmin: createVaultAdmin({ vaultFile: join(tmpdir(), 'unused-vault.dpapi'), sessionsDir: join(tmpdir(), 'unused-sessions'), vault, audit }),
     verifyAdmin: async () => ({ ok: false, status: 401 }),
     staticDir: join(tmpdir(), 'unused-static'),
     authIssuer: 'https://auth.example.ts.net',
@@ -94,8 +94,8 @@ describe('MCP 입구', () => {
     const s = await connect('frony_valid');
     const begun = await s.call<{ ok: boolean; sessionId: string }>('session_begin', { origin: 'https://shop.com' });
     expect(begun.ok).toBe(true);
-    const filled = await s.text('fill', { sessionId: begun.sessionId, ref: '1:e1', value: '{{vault:phone}}' });
-    expect(JSON.parse(filled)).toMatchObject({ ok: true, filledFrom: 'phone', len: 11 });
+    const filled = await s.text('fill', { sessionId: begun.sessionId, ref: '1:e1', value: '{{vault:profile.personal.phone}}' });
+    expect(JSON.parse(filled)).toMatchObject({ ok: true, filledFrom: 'profile.personal.phone', len: 11 });
     expect(filled).not.toContain(SECRET_PHONE);
     await s.call('session_end', { sessionId: begun.sessionId });
     await s.close();
@@ -106,8 +106,8 @@ describe('MCP 입구', () => {
     const begun = await s.call<{ sessionId: string }>('session_begin', { origin: 'https://shop.com' });
     const snap = await s.text('snapshot', { sessionId: begun.sessionId });
     expect(snap).not.toContain('010-1234-5678'); // variants 하이픈 변형까지 매칭
-    expect(snap).toContain('[REDACTED:phone]');
-    expect(audit.records.some((r) => r.evt === 'scrub_hit' && r.key === 'phone')).toBe(true);
+    expect(snap).toContain('[REDACTED:profile.personal.phone]');
+    expect(audit.records.some((r) => r.evt === 'scrub_hit' && r.key === 'profile.personal.phone')).toBe(true);
     await s.call('session_end', { sessionId: begun.sessionId });
     await s.close();
   });

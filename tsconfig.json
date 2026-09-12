@@ -4,6 +4,7 @@
     { "path": "./backend/core" },
     { "path": "./backend/app" },
     { "path": "./backend/api" },
-    { "path": "./backend/cli" }
+    { "path": "./backend/cli" },
+    { "path": "./backend/test" }
   ]
 }

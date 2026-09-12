@@ -6,13 +6,14 @@
  * 계정과 서버 실행 계정이 같아야 한다는 제약은 그대로다.
  */
 
-import { existsSync, readdirSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Audit, Cipher, Result, Vault, VaultEntry, ValueType } from '@wallet/core';
 import { VaultLockedError, defaultLabelFor, fail, migrateKeyNames, overviewVaultFile, readVaultFile, seedLabels, writeVaultFile } from '@wallet/core';
 import type { Caller } from './impl.js';
 
-const KEY_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+/** 키 이름은 `그룹.대상.항목` 세 조각 고정 (FWL-057) — 검사는 서버가 한다. 콘솔·CLI 규칙과 같은 식이다 */
+const KEY_NAME = /^[a-z0-9-]+\.[a-z0-9-]+\.[a-z0-9-]+$/;
 const LABEL_MAX = 60;
 const VALUE_TYPES: ReadonlySet<string> = new Set([
   'card', 'phone', 'rrn', 'email', 'name', 'address', 'text',
@@ -38,6 +39,16 @@ function labelOf(existing: ReadonlyMap<string, VaultEntry>, key: string, label?:
 export function createVaultAdmin(deps: VaultAdminDeps) {
   const { vaultFile, sessionsDir, vault, audit } = deps;
   const cipher = deps.cipher;
+  /** 이 프로세스가 마지막으로 쓴 금고 파일의 mtime — 서버 밖에서(CLI가) 고쳤는지 가리는 기준 */
+  let knownMtimeMs = 0;
+
+  function mtimeNow(): number {
+    try {
+      return statSync(vaultFile).mtimeMs;
+    } catch {
+      return 0;
+    }
+  }
 
   function log(caller: Caller, evt: 'vault_set' | 'vault_rm', key: string | null, ok: boolean, len?: number) {
     audit.append({
@@ -57,6 +68,8 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
     if (vault.locked) return readVaultFile(vaultFile, passphrase, cipher);
     // 열린 금고에 다른 패스프레이즈로 쓰면 파일이 그 암호로 통째로 재암호화된다 — 쓰기 전에 막는다
     if (vault.currentPassphrase() !== passphrase) throw new VaultLockedError();
+    // 서버 밖에서(CLI가) 파일을 고쳤으면 메모리가 낡았다 — 그대로 재암호화하면 그 쓰기가 조용히 사라진다
+    if (mtimeNow() !== knownMtimeMs) return readVaultFile(vaultFile, passphrase, cipher);
     return new Map(vault.live());
   }
 
@@ -84,7 +97,7 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
     ): Promise<Result<{ keys: Array<{ key: string; type: ValueType; len: number; grant: boolean; label: string }> }>> {
       if (items.length === 0) return fail('bad_request', 'no entries');
       for (const { key, type, value, grant, label } of items) {
-        if (!KEY_NAME.test(key)) return fail('bad_request', 'invalid key name');
+        if (!KEY_NAME.test(key)) return fail('bad_request', 'key must be group.subject.field');
         if (!VALUE_TYPES.has(type)) return fail('bad_request', 'invalid type');
         if (value.length === 0) return fail('bad_request', 'empty value');
         if (grant !== undefined && typeof grant !== 'boolean') return fail('bad_request', 'invalid grant');
@@ -101,6 +114,7 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
         }
         for (const [key, entry] of entries) existing.set(key, entry);
         writeVaultFile(vaultFile, passphrase, existing, cipher);
+        knownMtimeMs = mtimeNow();
         vault.applyWrite(existing);
       } catch {
         // 패스프레이즈 오류·계정 불일치를 구분해 주지 않는다
@@ -119,6 +133,7 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
         if (current === undefined) return fail('key_not_found', 'not in vault');
         entries.set(key, { ...current, grant });
         writeVaultFile(vaultFile, passphrase, entries, cipher);
+        knownMtimeMs = mtimeNow();
         vault.applyWrite(entries);
       } catch {
         log(caller, 'vault_set', key, false);
@@ -133,6 +148,7 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
       let result: ReturnType<typeof seedLabels>;
       try {
         result = seedLabels(vaultFile, passphrase, cipher);
+        knownMtimeMs = mtimeNow();
         vault.applyWrite(result.entries);
       } catch {
         return fail('vault_locked', 'wrong passphrase or account mismatch');
@@ -148,6 +164,7 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
       let result: ReturnType<typeof migrateKeyNames>;
       try {
         result = migrateKeyNames(vaultFile, passphrase, cipher);
+        knownMtimeMs = mtimeNow();
         vault.applyWrite(result.entries);
       } catch {
         return fail('vault_locked', 'wrong passphrase or account mismatch');
@@ -165,6 +182,7 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
       if (existsSync(vaultFile)) return fail('already_exists', 'vault already exists');
       try {
         writeVaultFile(vaultFile, passphrase, new Map(), cipher);
+        knownMtimeMs = mtimeNow();
         await vault.unlock(passphrase);
       } catch {
         log(caller, 'vault_set', null, false);
@@ -195,6 +213,7 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
         removed = entries.delete(key);
         if (removed) {
           writeVaultFile(vaultFile, passphrase, entries, cipher);
+          knownMtimeMs = mtimeNow();
           vault.applyWrite(entries);
         }
       } catch {
@@ -206,24 +225,28 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
       return { ok: true, key };
     },
 
-    /** 그룹 하나를 통째로 지운다 (FWL-056) — 이름의 첫 조각이 group인 키 전부. 복호화·재암호화는 한 번 */
-    async rmGroup(caller: Caller, passphrase: string, group: string): Promise<Result<{ group: string; removed: string[] }>> {
+    /**
+     * 지목한 키들을 한 번에 지운다 (FWL-056). 복호화·재암호화는 한 번.
+     * 그룹 이름이 아니라 키 목록을 받는다 — 확인한 목록과 지우는 목록이 같아야 한다
+     */
+    async rmKeys(caller: Caller, passphrase: string, keys: ReadonlyArray<string>): Promise<Result<{ removed: string[] }>> {
+      if (keys.length === 0) return fail('bad_request', 'no keys');
       let removed: string[];
       try {
         const entries = entriesNow(passphrase);
-        removed = [...entries.keys()].filter((k) => k.split('.')[0] === group);
+        removed = keys.filter((k) => entries.delete(k));
         if (removed.length > 0) {
-          for (const key of removed) entries.delete(key);
           writeVaultFile(vaultFile, passphrase, entries, cipher);
+          knownMtimeMs = mtimeNow();
           vault.applyWrite(entries);
         }
       } catch {
         log(caller, 'vault_rm', null, false);
         return fail('vault_locked', 'wrong passphrase or account mismatch');
       }
-      if (removed.length === 0) return fail('key_not_found', 'no keys in that group');
+      if (removed.length === 0) return fail('key_not_found', 'none of those keys are in the vault');
       for (const key of removed) log(caller, 'vault_rm', key, true);
-      return { ok: true, group, removed };
+      return { ok: true, removed };
     },
 
     async overview(

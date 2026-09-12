@@ -64,9 +64,12 @@ const COLLECT_ELEMENTS = `
   const clean = (s) => (s || '').replace(/\\s+/g, ' ').trim().slice(0, 60);
   // 폼 필드 자식을 제거한 사본에서 텍스트를 읽는다 — label이 textarea를 감싸면
   // textContent가 그 값(자식 텍스트 노드)까지 끌고 온다 (규칙 1)
+  // contenteditable도 같이 턴다 — 그 안에 타이핑된 금고 값이 요소 이름으로 새어나간다
   const safeText = (el) => {
+    // querySelectorAll은 자손만 잡는다 — 요소 자신이 contenteditable이면 여기서 끊어야 한다
+    if (el.isContentEditable) return '';
     const copy = el.cloneNode(true);
-    copy.querySelectorAll('input,textarea,select').forEach((f) => f.remove());
+    copy.querySelectorAll('input,textarea,select,[contenteditable]').forEach((f) => f.remove());
     return copy.textContent;
   };
   const nameOf = (el) => {

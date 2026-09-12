@@ -195,17 +195,8 @@ export function buildMcpServer(deps: McpDeps, caller: Caller): McpServer {
 
   server.registerTool(
     'vault_list',
-    { description: 'Names and types of the keys registered in the vault. Values are never returned.', inputSchema: {} },
+    { description: 'Names, types and labels of the keys registered in the vault, each with a grant flag saying whether fill needs a pay grant for it. Values and their lengths are never returned.', inputSchema: {} },
     async () => out('vault_list', await deps.handlers.vault_list(caller)),
-  );
-
-  server.registerTool(
-    'approval_wait',
-    {
-      description: 'Reserved for the approval channel. In this version it always returns approval_expired immediately; do not call it.',
-      inputSchema: { token: z.string(), timeoutMs: z.number().optional() },
-    },
-    async () => out('approval_wait', await deps.handlers.approval_wait()),
   );
 
   return server;

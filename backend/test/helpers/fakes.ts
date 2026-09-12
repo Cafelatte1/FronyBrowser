@@ -33,7 +33,8 @@ export function fakeVault(opts: FakeVaultOptions = {}): Vault {
     locked,
     unlock: async () => {},
     lock: () => {},
-    list: () => Object.entries(entries).map(([name, e]) => ({ name, type: e.type, grant: e.grant, label: e.label })),
+    list: () => Object.entries(entries).map(([name, e]) => ({ name, type: e.type, len: e.value.length, grant: e.grant, label: e.label })),
+    applyWrite: () => {},
     get: (key) => {
       if (locked) throw new VaultLockedError();
       return entries[key];
@@ -53,10 +54,6 @@ export type FakeTargetOptions = {
   readonly tree?: string;
   /** extract()가 돌려줄 표시 텍스트. 기본 null (없는 셀렉터) */
   readonly extractText?: string | null;
-  /** open()이 돌려줄 storedLogin. 기본 false (저장 로그인 없음) */
-  readonly storedLogin?: boolean;
-  /** open()이 돌려줄 storedLogin. 기본 false (저장 로그인 없음) */
-  readonly storedLogin?: boolean;
   /** open()이 돌려줄 storedLogin. 기본 false (저장 로그인 없음) */
   readonly storedLogin?: boolean;
   /** open()이 던질 예외. 세션 누수·에러 매핑 검증용 */

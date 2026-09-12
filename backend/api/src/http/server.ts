@@ -2,7 +2,7 @@
  * HTTP 서버. 소비자 입구는 /mcp 하나이고 나머지는 내부 경로다:
  *   POST /mcp            — MCP streamable-http (기기 키 인증)
  *   POST /login          — 등록 페이지 로그인 (FronyAuth /admin/verify 위임 → wsess_ 발급)
- *   POST /vault/unlock·set·rm·rm-group·list·grant·seed-labels·migrate-keys·create — admin 전용 (wsess_ 또는 admin 기기 키). 값은 응답에 없다
+ *   POST /vault/unlock·set·rm·rm-keys·list·grant·seed-labels·migrate-keys·create — admin 전용 (wsess_ 또는 admin 기기 키). 값은 응답에 없다
  *   POST /vault/reset    — 등록 페이지 세션(wsess_) 전용. 패스프레이즈를 받지 않는다 (마스터 비밀번호 분실용, FWL-056)
  *   POST /vault/handoff  — admin, 또는 서버 자신의 서비스 키(같은 머신의 배포 스크립트). 인계 파일만 쓴다 (FWL-042)
  *   GET/POST /admin/test-mode — 등록 페이지 세션(wsess_) 전용. 기기 키는 admin이라도 403 (FWL-035)
@@ -81,7 +81,11 @@ export function protectedResourceMetadata(publicUrl: string, authIssuer: string)
   };
 }
 
-/** claude.ai 웹앱은 브라우저에서 커넥터를 검사한다 — preflight는 자격 없이 통과하고 401의 WWW-Authenticate가 스크립트에 읽혀야 한다 */
+/**
+ * claude.ai 웹앱은 브라우저에서 커넥터를 검사한다 — preflight는 자격 없이 통과하고 401의 WWW-Authenticate가 스크립트에 읽혀야 한다.
+ * 그래서 커넥터 입구(`/mcp`와 RFC 9728 메타데이터)에만 붙인다 — 모든 응답에 붙이면 아무 웹 페이지나 vault 라우트를 부를 수 있다.
+ * 관리 UI는 같은 오리진에서 서빙되므로 CORS가 필요 없다
+ */
 function cors(res: ServerResponse): void {
   res.setHeader('access-control-allow-origin', '*');
   res.setHeader('access-control-allow-methods', 'GET, POST, DELETE, OPTIONS');
@@ -154,7 +158,7 @@ export function createHttpServer(deps: HttpDeps): Server {
 
 async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res: ServerResponse): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://internal');
-  cors(res);
+  if (url.pathname === '/mcp' || url.pathname === METADATA_PATH) cors(res);
 
   // DNS 리바인딩 방어 — 인증이 없으니 Host로 막는다 (FWL-053)
   if (deps.local) {
@@ -298,7 +302,7 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
     const caller = await requireAdmin(deps, gui, req, res);
     if (!caller) return;
     const body = (await readBody(req)) as
-      | { passphrase?: string; key?: string; group?: string; type?: string; value?: string; grant?: unknown; label?: unknown }
+      | { passphrase?: string; key?: string; keys?: string[]; type?: string; value?: string; grant?: unknown; label?: unknown }
       | undefined;
     // 값을 더하는 쓰기(set)와 금고를 여는 호출(unlock·create)만 마스터 비밀번호를 요구한다.
     // 나머지(목록·삭제·grant 토글·라벨 시딩)는 금고가 열려 있으면 메모리의 패스프레이즈로 처리한다 —
@@ -369,12 +373,12 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
       jsonScrubbed(deps, 'vault_rm', res, adminStatus(result), result);
       return;
     }
-    if (url.pathname === '/vault/rm-group') {
-      if (typeof body?.group !== 'string') {
-        json(res, 400, { ok: false, error: { code: 'bad_request', message: 'group required', retriable: false } });
+    if (url.pathname === '/vault/rm-keys') {
+      if (!(Array.isArray(body?.keys) && body.keys.every((k) => typeof k === 'string'))) {
+        json(res, 400, { ok: false, error: { code: 'bad_request', message: 'keys required', retriable: false } });
         return;
       }
-      const result = await deps.vaultAdmin.rmGroup(caller, passphrase, body.group as string);
+      const result = await deps.vaultAdmin.rmKeys(caller, passphrase, body.keys as string[]);
       jsonScrubbed(deps, 'vault_rm', res, adminStatus(result), result);
       return;
     }
