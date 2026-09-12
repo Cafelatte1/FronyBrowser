@@ -300,28 +300,37 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
     const body = (await readBody(req)) as
       | { passphrase?: string; key?: string; type?: string; value?: string; grant?: unknown; label?: unknown }
       | undefined;
-    if (typeof body?.passphrase !== 'string') {
-      json(res, 400, { ok: false, error: { code: 'bad_request', message: 'passphrase required', retriable: false } });
+    // 값을 더하는 쓰기(set)와 금고를 여는 호출(unlock·create)만 마스터 비밀번호를 요구한다.
+    // 나머지(목록·삭제·grant 토글·라벨 시딩)는 금고가 열려 있으면 메모리의 패스프레이즈로 처리한다 —
+    // 관리 UI가 화면을 띄울 때마다 비밀번호를 묻지 않게 한다 (FWL-057). 잠겨 있으면 vault_locked다
+    const ALWAYS_ASK = new Set(['/vault/unlock', '/vault/create', '/vault/set', '/vault/handoff']);
+    const passphrase =
+      typeof body?.passphrase === 'string' ? body.passphrase : ALWAYS_ASK.has(url.pathname) ? null : deps.vault.currentPassphrase();
+    if (passphrase === null) {
+      const locked = !ALWAYS_ASK.has(url.pathname);
+      json(res, locked ? 403 : 400, locked
+        ? { ok: false, error: { code: 'vault_locked', message: 'unlock required', retriable: false } }
+        : { ok: false, error: { code: 'bad_request', message: 'passphrase required', retriable: false } });
       return;
     }
 
     if (url.pathname === '/vault/unlock') {
-      const result = await deps.handlers.vault_unlock(caller, body.passphrase);
+      const result = await deps.handlers.vault_unlock(caller, passphrase);
       jsonScrubbed(deps, 'vault_unlock', res, result.ok ? 200 : 403, result);
       return;
     }
     if (url.pathname === '/vault/list') {
-      const result = await deps.vaultAdmin.overview(caller, body.passphrase);
+      const result = await deps.vaultAdmin.overview(caller, passphrase);
       jsonScrubbed(deps, 'vault_list', res, adminStatus(result), result);
       return;
     }
     if (url.pathname === '/vault/create') {
-      const result = await deps.vaultAdmin.create(caller, body.passphrase);
+      const result = await deps.vaultAdmin.create(caller, passphrase);
       jsonScrubbed(deps, 'vault_create', res, adminStatus(result), result);
       return;
     }
     if (url.pathname === '/vault/seed-labels') {
-      const result = await deps.vaultAdmin.seedLabels(caller, body.passphrase);
+      const result = await deps.vaultAdmin.seedLabels(caller, passphrase);
       jsonScrubbed(deps, 'vault_seed_labels', res, adminStatus(result), result);
       return;
     }
@@ -334,33 +343,33 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
           json(res, 400, { ok: false, error: { code: 'bad_request', message: 'entries: [{ key, type, value, grant?, label? }]', retriable: false } });
           return;
         }
-        const result = await deps.vaultAdmin.setMany(caller, body.passphrase, entries as Array<{ key: string; type: string; value: string; grant?: boolean; label?: string }>);
+        const result = await deps.vaultAdmin.setMany(caller, passphrase, entries as Array<{ key: string; type: string; value: string; grant?: boolean; label?: string }>);
         jsonScrubbed(deps, 'vault_set', res, adminStatus(result), result);
         return;
       }
-      if (typeof body.key !== 'string' || typeof body.type !== 'string' || typeof body.value !== 'string') {
+      if (typeof body?.key !== 'string' || typeof body?.type !== 'string' || typeof body?.value !== 'string') {
         json(res, 400, { ok: false, error: { code: 'bad_request', message: 'key/type/value required', retriable: false } });
         return;
       }
-      const result = await deps.vaultAdmin.set(caller, body.passphrase, body.key, body.type, body.value, typeof body.grant === 'boolean' ? body.grant : false, typeof body.label === 'string' ? body.label : undefined);
+      const result = await deps.vaultAdmin.set(caller, passphrase, body.key as string, body.type as string, body.value as string, typeof body?.grant === 'boolean' ? body.grant : false, typeof body?.label === 'string' ? body.label : undefined);
       jsonScrubbed(deps, 'vault_set', res, adminStatus(result), result);
       return;
     }
     if (url.pathname === '/vault/rm') {
-      if (typeof body.key !== 'string') {
+      if (typeof body?.key !== 'string') {
         json(res, 400, { ok: false, error: { code: 'bad_request', message: 'key required', retriable: false } });
         return;
       }
-      const result = await deps.vaultAdmin.rm(caller, body.passphrase, body.key);
+      const result = await deps.vaultAdmin.rm(caller, passphrase, body.key as string);
       jsonScrubbed(deps, 'vault_rm', res, adminStatus(result), result);
       return;
     }
     if (url.pathname === '/vault/grant') {
-      if (typeof body.key !== 'string' || typeof body.grant !== 'boolean') {
+      if (typeof body?.key !== 'string' || typeof body?.grant !== 'boolean') {
         json(res, 400, { ok: false, error: { code: 'bad_request', message: 'key/grant required', retriable: false } });
         return;
       }
-      const result = await deps.vaultAdmin.grant(caller, body.passphrase, body.key, body.grant);
+      const result = await deps.vaultAdmin.grant(caller, passphrase, body.key, body.grant as boolean);
       jsonScrubbed(deps, 'vault_set', res, adminStatus(result), result);
       return;
     }
