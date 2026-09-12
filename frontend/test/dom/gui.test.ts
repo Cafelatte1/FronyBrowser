@@ -275,6 +275,32 @@ describe('grant 토글과 키 보류', () => {
     expect(row('profile.personal.email').querySelector('.grant')?.getAttribute('data-grant')).toBe('on');
   });
 
+  it('grant를 끌 때는 확인을 거친다 — 취소하면 체크도 서버도 그대로다', async () => {
+    // 앞 테스트가 켜 둔 상태에서 시작한다
+    expect(registered.get('profile.personal.email')?.grant).toBe(true);
+    calls.length = 0;
+
+    (row('profile.personal.email').querySelector('.grant') as HTMLButtonElement).click();
+    await settle();
+    expect($('dialog').hidden).toBe(false);
+    expect($('dlg-title').textContent).toBe('Stop requiring a pay grant?');
+    expect(calls.some((c) => c.path === '/vault/grant')).toBe(false);
+    expect(row('profile.personal.email').querySelector('.grant')?.getAttribute('data-grant')).toBe('on');
+
+    $('dlg-cancel').click();
+    await settle();
+    expect(calls.some((c) => c.path === '/vault/grant')).toBe(false);
+    expect(registered.get('profile.personal.email')?.grant).toBe(true);
+
+    (row('profile.personal.email').querySelector('.grant') as HTMLButtonElement).click();
+    $('dlg-submit').click();
+    await settle();
+    expect($('dialog').hidden).toBe(true);
+    expect(calls.find((c) => c.path === '/vault/grant')?.body).toEqual({ key: 'profile.personal.email', grant: false });
+    expect(registered.get('profile.personal.email')?.grant).toBe(false);
+    expect(row('profile.personal.email').querySelector('.grant')?.getAttribute('data-grant')).toBe('off');
+  });
+
   it('값이 없는 키의 grant는 저장 때 같이 나간다', async () => {
     (row('profile.personal.carrier').querySelector('.grant') as HTMLButtonElement).click();
     expect(row('profile.personal.carrier').querySelector('.grant')?.getAttribute('data-grant')).toBe('on');

@@ -16,7 +16,7 @@ type Row = {
   registered: boolean; secret: boolean; field?: FieldDef;
 };
 type VaultState = 'open' | 'locked' | 'missing' | 'offline';
-type Dlg = 'confirm' | 'unlock' | 'extend' | 'group' | 'testOn' | 'testOff' | 'wipe';
+type Dlg = 'confirm' | 'unlock' | 'extend' | 'group' | 'testOn' | 'testOff' | 'wipe' | 'grantOff';
 
 let existing = new Map<string, KeyInfo>();
 let current = SECTIONS[0]!.id;
@@ -35,6 +35,8 @@ const draft = new Map<string, string>();
 /** 아직 등록되지 않은 키의 grant 체크 상태 (저장 때 같이 나간다) */
 const grantDraft = new Map<string, boolean>();
 let dlg: Dlg | null = null;
+/** grantOff 대화상자가 묻고 있는 줄 — 확인을 누르면 이 줄의 플래그를 끈다 */
+let grantOffRow: Row | null = null;
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const token = (): string | null => sessionStorage.getItem('wallet-wsess');
@@ -394,13 +396,23 @@ async function toggleGrant(r: Row): Promise<void> {
     render();
     return;
   }
-  // 먼저 뒤집어 그리고 서버에는 뒤이어 보낸다 — 클릭이 왕복을 기다리지 않는다. 실패하면 되돌린다
+  // 끄는 쪽은 보호를 없애는 방향이라 한 번 묻는다. 켜는 쪽은 그대로 즉시 반영한다
+  if (r.grant) {
+    grantOffRow = r;
+    openDialog('grantOff');
+    return;
+  }
+  await applyGrant(r, true);
+}
+
+/** 먼저 뒤집어 그리고 서버에는 뒤이어 보낸다 — 클릭이 왕복을 기다리지 않는다. 실패하면 되돌린다 */
+async function applyGrant(r: Row, grant: boolean): Promise<void> {
   const info = existing.get(r.key);
   if (info === undefined) return;
-  existing.set(r.key, { ...info, grant: !r.grant });
+  existing.set(r.key, { ...info, grant });
   render();
   try {
-    const res = (await api('/vault/grant', { key: r.key, grant: !r.grant })) as { grant?: boolean };
+    const res = (await api('/vault/grant', { key: r.key, grant })) as { grant?: boolean };
     note(true, res.grant === true
       ? `${r.label} now needs a pay grant.`
       : `${r.label} no longer needs a pay grant.`);
@@ -644,6 +656,10 @@ function openDialog(kind: Dlg): void {
     title = 'Leave Test Mode?';
     body = 'The next run pays for real, with every key the policy allows — including the ones you were holding back.';
     action = 'Go live';
+  } else if (kind === 'grantOff') {
+    title = 'Stop requiring a pay grant?';
+    body = `Any session will be able to fill ${grantOffRow?.label ?? 'this key'} without a pay grant from the calling service. Turning it back on takes one click.`;
+    action = 'Turn it off';
   } else {
     title = 'Reset the vault?';
     body = 'Every registered key and its value is destroyed, along with the master password. You will set a new one before anything can be registered again. This cannot be undone.';
@@ -652,7 +668,7 @@ function openDialog(kind: Dlg): void {
   $('dlg-title').textContent = title;
   $('dlg-body').textContent = body;
   $('dlg-submit').textContent = action;
-  $('dlg-submit').classList.toggle('danger', kind === 'wipe');
+  $('dlg-submit').classList.toggle('danger', kind === 'wipe' || kind === 'grantOff');
   $('dlg-icon-pass').hidden = !needsPass;
   $('dlg-icon-test').hidden = !(kind === 'testOn' || kind === 'testOff');
   $('dlg-icon-group').hidden = kind !== 'group';
@@ -667,6 +683,7 @@ function openDialog(kind: Dlg): void {
 
 function closeDialog(): void {
   dlg = null;
+  grantOffRow = null;
   $('dialog').hidden = true;
   $<HTMLInputElement>('dlg-pass').value = '';
   $<HTMLInputElement>('dlg-group').value = '';
@@ -689,6 +706,12 @@ function submitDialog(): void {
     } catch (e) {
       dlgError((e as Error).message);
     }
+    return;
+  }
+  if (kind === 'grantOff') {
+    const r = grantOffRow;
+    closeDialog();
+    if (r !== null) void applyGrant(r, false);
     return;
   }
   const run = kind === 'confirm' ? saveGroup(pass)
