@@ -9,7 +9,7 @@
 import { existsSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Audit, Cipher, Result, Vault, VaultEntry, ValueType } from '@wallet/core';
-import { VaultLockedError, defaultLabelFor, fail, overviewVaultFile, readVaultFile, seedLabels, writeVaultFile } from '@wallet/core';
+import { VaultLockedError, defaultLabelFor, fail, migrateKeyNames, overviewVaultFile, readVaultFile, seedLabels, writeVaultFile } from '@wallet/core';
 import type { Caller } from './impl.js';
 
 const KEY_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
@@ -141,6 +141,23 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
       if (result.backup !== '') console.log(`금고 라벨 시딩 — 백업: ${result.backup}`);
       for (const { key } of result.seeded) log(caller, 'vault_set', key, true);
       return { ok: true, seeded: [...result.seeded] };
+    },
+
+    /** 두 조각이던 옛 키 이름을 `그룹.대상.항목`으로 옮긴다 (FWL-057). 백업을 먼저 만든다 */
+    async migrateKeys(caller: Caller, passphrase: string): Promise<Result<{ moved: Array<{ from: string; to: string }> }>> {
+      let result: ReturnType<typeof migrateKeyNames>;
+      try {
+        result = migrateKeyNames(vaultFile, passphrase, cipher);
+        vault.applyWrite(result.entries);
+      } catch {
+        return fail('vault_locked', 'wrong passphrase or account mismatch');
+      }
+      if (result.backup !== '') console.log(`금고 키 이름 마이그레이션 — 백업: ${result.backup}`);
+      for (const { from, to } of result.moved) {
+        log(caller, 'vault_rm', from, true);
+        log(caller, 'vault_set', to, true);
+      }
+      return { ok: true, moved: [...result.moved] };
     },
 
     /** 금고 파일을 새로 만든다 (FWL-056). 이미 있으면 already_exists — 덮어쓰면 값이 통째로 사라진다 */

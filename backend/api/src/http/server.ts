@@ -2,7 +2,7 @@
  * HTTP 서버. 소비자 입구는 /mcp 하나이고 나머지는 내부 경로다:
  *   POST /mcp            — MCP streamable-http (기기 키 인증)
  *   POST /login          — 등록 페이지 로그인 (FronyAuth /admin/verify 위임 → wsess_ 발급)
- *   POST /vault/unlock·set·rm·rm-group·list·grant·seed-labels·create — admin 전용 (wsess_ 또는 admin 기기 키). 값은 응답에 없다
+ *   POST /vault/unlock·set·rm·rm-group·list·grant·seed-labels·migrate-keys·create — admin 전용 (wsess_ 또는 admin 기기 키). 값은 응답에 없다
  *   POST /vault/reset    — 등록 페이지 세션(wsess_) 전용. 패스프레이즈를 받지 않는다 (마스터 비밀번호 분실용, FWL-056)
  *   POST /vault/handoff  — admin, 또는 서버 자신의 서비스 키(같은 머신의 배포 스크립트). 인계 파일만 쓴다 (FWL-042)
  *   GET/POST /admin/test-mode — 등록 페이지 세션(wsess_) 전용. 기기 키는 admin이라도 403 (FWL-035)
@@ -332,6 +332,11 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
     if (url.pathname === '/vault/seed-labels') {
       const result = await deps.vaultAdmin.seedLabels(caller, passphrase);
       jsonScrubbed(deps, 'vault_seed_labels', res, adminStatus(result), result);
+      return;
+    }
+    if (url.pathname === '/vault/migrate-keys') {
+      const result = await deps.vaultAdmin.migrateKeys(caller, passphrase);
+      jsonScrubbed(deps, 'vault_migrate_keys', res, adminStatus(result), result);
       return;
     }
     if (url.pathname === '/vault/set') {

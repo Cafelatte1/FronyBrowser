@@ -274,13 +274,13 @@ export function migrateKeyNames(
   path: string,
   passphrase: string,
   cipher: Cipher = dpapi,
-): { readonly backup: string; readonly moved: ReadonlyArray<{ from: string; to: string }> } {
+): { readonly backup: string; readonly moved: ReadonlyArray<{ from: string; to: string }>; readonly entries: ReadonlyMap<string, VaultEntry> } {
   const entries = readVaultFile(path, passphrase, cipher);
   // 새 이름이 이미 있으면 덮어쓰지 않는다 — 옛 이름은 그대로 두고 moved에서 뺀다
   const movable = [...KEY_RENAMES]
     .filter(([from, to]) => entries.has(from) && !entries.has(to))
     .map(([from, to]) => ({ from, to }));
-  if (movable.length === 0) return { backup: '', moved: [] };
+  if (movable.length === 0) return { backup: '', moved: [], entries };
 
   // 쓰기 전에 원본을 복사해 둔다 — 이름을 잘못 옮겨도 되돌릴 수 있어야 한다
   const backup = `${path}.bak-${backupStamp(new Date())}`;
@@ -291,7 +291,7 @@ export function migrateKeyNames(
     entries.delete(from);
   }
   writeVaultFile(path, passphrase, entries, cipher);
-  return { backup, moved: movable };
+  return { backup, moved: movable, entries };
 }
 
 export type VaultOptions = {

@@ -252,7 +252,8 @@ describe('키 이름 이전 (FWL-057)', () => {
 
     const backupsAfterFirst = readdirSync(dir).filter((f) => f.startsWith('migrate.dpapi.bak-'));
     const second = migrateKeyNames(path, 'pp', fakeCipher);
-    expect(second).toEqual({ backup: '', moved: [] });
+    expect(second.backup).toBe('');
+    expect(second.moved).toEqual([]);
     expect(readdirSync(dir).filter((f) => f.startsWith('migrate.dpapi.bak-'))).toEqual(backupsAfterFirst);
   });
 });
