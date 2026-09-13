@@ -5,7 +5,7 @@
  * 있으므로 그대로 밖에 내보내지 않는다 (규칙 5).
  */
 
-import type { ActionResult, ActionTarget, ErrorCode, Intent, Ref, SafeSnapshot, SessionId } from '@wallet/core';
+import type { ActionResult, ActionTarget, ErrorCode, Intent, PageImage, Ref, SafeSnapshot, SessionId } from '@wallet/core';
 import { KeypadUnresolvedError, resolveKeypadSprite, isBrowserProfile } from '@wallet/core';
 import type { ElementHandle, Page } from 'patchright';
 import { BrowserUnavailableError } from './context.js';
@@ -13,13 +13,16 @@ import type { BrowserPool, SessionBrowser, StorageState } from './context.js';
 import { originOfHandle } from './frames.js';
 import type { RefEntry, RefTable } from './refs.js';
 import { createRefTable } from './refs.js';
-import { buildSnapshot } from './snapshot.js';
+import { buildSnapshot, FIELD_SELECTOR } from './snapshot.js';
 
 export class TargetError extends Error {
   constructor(readonly code: ErrorCode) {
     super(code); // 원인 예외를 message에 싣지 않는다
   }
 }
+
+/** 마스크 박스 색 (FWL-062). 페이지에 자연스럽게 있을 수 없는 색이라, 가려진 자리가 사진에서 한눈에 보인다 */
+const MASK_COLOR = '#FF00FF';
 
 /** page: 현재 페이지. 새 탭이 열리면 그것으로 바뀐다 (FWL-043) — 사람이 브라우저를 쓰는 감각과 같다 */
 type SessionState = { readonly browser: SessionBrowser; readonly refs: RefTable; readonly origin: string; page: Page; readonly follow: (p: Page) => void };
@@ -184,6 +187,23 @@ export function createPlaywrightTarget(pool: BrowserPool, opts: PlaywrightTarget
       } finally {
         void root?.handle.dispose().catch(() => {});
       }
+    },
+
+    /**
+     * 현재 화면 한 장 (FWL-062). 프레임마다 locator를 만들어 넘긴다 —
+     * `page.locator()`는 최상위 프레임만 훑는데, 카드번호가 사는 곳은 PG사 cross-origin iframe이다 (규칙 4).
+     * 한 프레임이라도 빠뜨리면 가장 지켜야 할 필드만 정확히 드러난 사진이 나온다.
+     */
+    async image(sessionId): Promise<PageImage> {
+      const s = state(sessionId);
+      const mask = s.page.frames().map((f) => f.locator(FIELD_SELECTOR));
+      let masked = 0;
+      for (const m of mask) masked += await m.count().catch(() => 0);
+      const png = await guarded(() => s.page.screenshot({ mask, maskColor: MASK_COLOR, type: 'png' }), 'timeout');
+      // 문자열로 넘긴다 — 이 패키지는 DOM lib을 안 켜서 페이지 안에서 도는 코드는 타입 검사 대상이 아니다 (snapshot.ts와 같은 방식).
+      // viewportSize()를 못 쓰는 이유: chrome 프로필은 viewport를 null로 연다 (CDP Emulation 흔적 회피, context.ts:126)
+      const size = (await s.page.evaluate('({ width: innerWidth, height: innerHeight })')) as { width: number; height: number };
+      return { png, width: size.width, height: size.height, masked };
     },
 
     async extract(sessionId, selector) {

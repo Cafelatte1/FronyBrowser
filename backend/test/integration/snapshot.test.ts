@@ -8,6 +8,7 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { Ref, SessionId } from '@wallet/core';
+import { decodePng } from '@wallet/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createBrowserPool, createPlaywrightTarget, TargetError } from '@wallet/app';
 
@@ -358,4 +359,47 @@ describe('scroll (FWL-061)', () => {
     const after = await target.snapshot(sid);
     expect(after.tree).toContain('컨테이너 스크롤됨');
   }, 30_000);
+});
+
+/**
+ * page_image (FWL-062). 별도 픽스처를 쓰는 이유: 마스크 박스를 픽셀 좌표로 확인해야 해서
+ * 입력창과 iframe의 위치를 고정해야 한다.
+ */
+describe('page_image (FWL-062) — 규칙 1의 경계선을 픽셀에도 긋는다', () => {
+  const isid = 's_image' as SessionId;
+  let innerServer: Server;
+  let outerServer: Server;
+
+  beforeAll(async () => {
+    // PG사 프레임 모사 — 카드번호는 늘 cross-origin iframe 안에 있다 (규칙 4)
+    innerServer = await serve('<body style="margin:0"><input placeholder="카드번호" style="display:block;width:300px;height:40px;border:0"></body>');
+    outerServer = await serve(
+      `<body style="margin:0"><input placeholder="받는분" style="display:block;width:300px;height:40px;border:0"><iframe src="${originOf(innerServer)}/" style="display:block;width:400px;height:60px;border:0"></iframe></body>`,
+    );
+    await target.open(isid, { origin: originOf(outerServer), kind: 'browser', browser: 'chromium', headless: true });
+    await target.act(isid, { kind: 'navigate', url: `${originOf(outerServer)}/` });
+  }, 60_000);
+
+  afterAll(async () => {
+    await target.close(isid).catch(() => {});
+    innerServer?.close();
+    outerServer?.close();
+  });
+
+  it('채운 값은 그림에 남지 않는다 — 최상위와 PG 프레임의 입력창이 모두 덮인다', async () => {
+    const snap = await target.snapshot(isid);
+    await target.act(isid, { kind: 'fill', ref: refOf(snap.tree, 'textbox', '카드번호'), value: CARD_TYPED });
+
+    const img = await target.image(isid);
+    // 최상위 1 + PG 프레임 1. 프레임 순회가 빠지면 1이 되고, 그때 드러나는 게 하필 카드 필드다
+    expect(img.masked).toBe(2);
+
+    const png = decodePng(img.png);
+    const at = (x: number, y: number): string => {
+      const i = (y * png.width + x) * 4;
+      return [png.data[i], png.data[i + 1], png.data[i + 2]].join(',');
+    };
+    expect(at(150, 20)).toBe('255,0,255'); // 최상위 입력창 (0,0)~(300,40)
+    expect(at(150, 60)).toBe('255,0,255'); // iframe 안의 카드 입력창 (0,40)~(300,80)
+  }, 60_000);
 });

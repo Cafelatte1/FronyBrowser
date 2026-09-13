@@ -24,7 +24,7 @@ import type {
   Session,
 } from '@wallet/core';
 import { KeyNotFoundError, VaultLockedError, fail, failFromUnknown, findKeys, markGrantUsed, resolve, verifyPayGrant, writeUnlockHandoff } from '@wallet/core';
-import type { BrowserProfile, Cipher, KeypadSpec, LaunchProfile, Ref, SnapshotOptions, TargetKind, TestMode } from '@wallet/core';
+import type { BrowserProfile, Cipher, KeypadSpec, LaunchProfile, PageImage, Ref, SnapshotOptions, TargetKind, TestMode } from '@wallet/core';
 import { isBrowserProfile } from '@wallet/core';
 import { TargetError } from '@wallet/app';
 
@@ -249,6 +249,34 @@ export function createHandlers(deps: HandlerDeps) {
           kind: 'page_tree',
           code: f.error.code,
         });
+        return f;
+      }
+    },
+
+    /**
+     * 현재 화면 한 장 (FWL-062). 입력창은 덮인 채로 찍힌다 (규칙 1).
+     * 반환에 PNG 바이트가 실리지만, 그건 `scrub()`을 통과할 수 없다 — 입구(mcp/server.ts)가
+     * 메타데이터만 스크러버에 넣고 바이트는 별도 콘텐츠 블록으로 내보낸다 (규칙 3 예외).
+     */
+    async page_image(caller: Caller, id: SessionId): Promise<Result<{ image: PageImage }>> {
+      const found = session(caller, id);
+      if (!found.ok) return found;
+      const target = targetOf(found.session);
+      try {
+        const image = await target.image(id);
+        // 마스킹이 돌았다는 증거는 masked 수뿐이다 — 이미지 자체는 절대 남기지 않는다 (규칙 5)
+        audit.append({
+          evt: 'page_image',
+          ...baseAudit(found.session, caller),
+          origin: null,
+          w: image.width,
+          h: image.height,
+          masked: image.masked,
+        });
+        return { ok: true, image };
+      } catch (e) {
+        const f = toFailure(e);
+        audit.append({ evt: 'action_failed', ...baseAudit(found.session, caller), origin: null, kind: 'page_image', code: f.error.code });
         return f;
       }
     },

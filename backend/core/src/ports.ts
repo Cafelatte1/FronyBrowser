@@ -6,7 +6,7 @@
  */
 
 import type { KeypadResolver } from './keypad-sprite.js';
-import type { LaunchProfile, PageInfo, Ref, SafeSnapshot, SessionId, SnapshotOptions } from './types.js';
+import type { LaunchProfile, PageImage, PageInfo, Ref, SafeSnapshot, SessionId, SnapshotOptions } from './types.js';
 
 /** 어댑터가 수행할 수 있는 동작. 화이트리스트다 */
 export type Intent =
@@ -69,6 +69,9 @@ export interface ActionTarget {
 
   /** 값이 제거된 스냅샷. 브랜디드 타입이 규칙 1을 강제한다. opts는 출력 범위만 줄인다 (FWL-043) */
   snapshot(sessionId: SessionId, opts?: SnapshotOptions): Promise<SafeSnapshot>;
+
+  /** 현재 화면 한 장. 입력창은 마스크 박스로 덮는다 — 모든 프레임에서, 값이 사는 PG iframe 포함 (규칙 1) */
+  image(sessionId: SessionId): Promise<PageImage>;
 
   /** 셀렉터로 표시 텍스트 하나를 읽는다. 핸들러에는 이 경로가 없다 — 통합 테스트의 오라클이다 */
   extract(sessionId: SessionId, selector: string): Promise<string | null>;

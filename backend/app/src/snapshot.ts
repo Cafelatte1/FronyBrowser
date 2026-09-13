@@ -21,6 +21,13 @@ export function serialize(body: SnapshotBody): SafeSnapshot {
   return body as SafeSnapshot;
 }
 
+/**
+ * 값을 담을 수 있는 요소 — 규칙 1의 경계선이다. 브라우저에서 사람이 글자를 쳐 넣을 수 있는 곳은
+ * 이 셋뿐이라(select는 고르는 것), `fill`이 넣은 값은 정의상 전부 이 안에 있다.
+ * 스냅샷은 이 안의 텍스트를 읽지 않고, page_image는 이 요소들을 마스크로 덮는다 (FWL-062).
+ */
+export const FIELD_SELECTOR = 'input,textarea,select,[contenteditable]';
+
 /** filter: 'interactive'에서 남는 role — 클릭·입력 대상. heading·img·text 줄은 빠진다 */
 const INTERACTIVE_ROLES = new Set(['button', 'link', 'textbox', 'combobox', 'checkbox', 'radio', 'switch', 'tab', 'clickable']);
 
@@ -71,7 +78,7 @@ const COLLECT = `
     // querySelectorAll은 자손만 잡는다 — 요소 자신이 contenteditable이면 여기서 끊어야 한다
     if (el.isContentEditable) return '';
     const copy = el.cloneNode(true);
-    copy.querySelectorAll('input,textarea,select,[contenteditable]').forEach((f) => f.remove());
+    copy.querySelectorAll('${FIELD_SELECTOR}').forEach((f) => f.remove());
     return copy.textContent;
   };
   // 요소 텍스트에서 온 이름 (FWL-059). 상품 카드 하나가 통째로 <a>라서 60자에서 자르면

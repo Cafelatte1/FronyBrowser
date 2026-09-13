@@ -110,6 +110,10 @@ export function fakeTarget(opts: FakeTargetOptions = {}): FakeTarget {
       takeFailure();
       return { gen: 1, pages: 1, url, tree: opts.tree ?? '- textbox "휴대폰" [ref=1:e1]' } as SafeSnapshot;
     },
+    image: async () => {
+      takeFailure();
+      return { png: new Uint8Array([0x89, 0x50, 0x4e, 0x47]), width: 1920, height: 1080, masked: 2 };
+    },
     extract: async () => opts.extractText ?? null,
     status: async () => ({ url, pages: [{ index: 0, url, current: true }], snapshotGen: 1 }),
     switchPage: async (_sid, index: number) => {

@@ -12,6 +12,7 @@ export const HANDLERS = [
   'session_status',
   'session_end',
   'page_tree',
+  'page_image',
   'fill',
   'click',
   'select',

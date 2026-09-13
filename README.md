@@ -66,7 +66,7 @@ selectors and amount checks all arrive per call from the calling service.
 ## Tools
 
 - Session: `session_begin`, `session_list`, `session_status`, `session_end`
-- Page: `page_tree`, `navigate`, `fill`, `click`, `select`, `scroll`, `wait`, `page_switch`
+- Page: `page_tree`, `page_image`, `navigate`, `fill`, `click`, `select`, `scroll`, `wait`, `page_switch`
 - Vault: `vault_list` (names, types, labels and the grant flag — never values or their lengths)
 
 The folder `backend/api/src/handlers/` is the whitelist: a capability that has no handler there does

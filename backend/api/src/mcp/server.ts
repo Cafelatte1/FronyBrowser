@@ -11,7 +11,7 @@
  */
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import type { Audit, Ref, Result, SessionId, Vault } from '@wallet/core';
+import type { Audit, PageImage, Ref, Result, SessionId, Vault } from '@wallet/core';
 import { z } from 'zod';
 import { scrub } from '../egress.js';
 import { egressContext } from '../egress-context.js';
@@ -42,6 +42,26 @@ export function buildMcpServer(deps: McpDeps, caller: Caller): McpServer {
     return {
       content: [{ type: 'text' as const, text: JSON.stringify(scrubbed) }],
       isError: !(scrubbed as { ok: boolean }).ok,
+    };
+  }
+
+  /**
+   * 이미지 응답 (FWL-062) — 규칙 3의 유일한 예외다.
+   *
+   * PNG 바이트는 `scrub()`을 통과할 수 없다. 평문 매칭은 픽셀 안의 값을 못 찾고, base64를 대신
+   * 넣으면 카드 뒷 4자리 같은 짧은 변형이 270KB 문자열 어딘가와 반드시 우연히 맞아 이미지를 망가뜨린다.
+   * 그래서 메타데이터만 스크러버에 넣고 바이트는 별도 콘텐츠 블록으로 내보낸다.
+   * 입력창은 촬영 시점에 이미 덮여 있고(규칙 1), 사이트가 화면에 표시한 값은 가려지지 않는다.
+   */
+  function outImage(handler: string, result: Result<{ image: PageImage }>, url: string | null = null) {
+    if (!result.ok) return out(handler, result, url);
+    const { png, ...meta } = result.image;
+    const scrubbed = scrub({ ok: true as const, image: meta }, egressContext(deps.vault, deps.audit, handler, url));
+    return {
+      content: [
+        { type: 'text' as const, text: JSON.stringify(scrubbed) },
+        { type: 'image' as const, data: Buffer.from(png).toString('base64'), mimeType: 'image/png' },
+      ],
     };
   }
 
@@ -124,6 +144,16 @@ export function buildMcpServer(deps: McpDeps, caller: Caller): McpServer {
         ...(filter === undefined ? {} : { filter }),
         ...(raw === undefined ? {} : { raw }),
       })),
+  );
+
+  server.registerTool(
+    'page_image',
+    {
+      description:
+        'A picture of what is on screen right now — the viewport of the current page, as a PNG. Reach for it when the layout, an image or a captcha carries meaning the element tree cannot: page_tree is cheaper and is the only source of refs. Every input, textarea, select and contenteditable is covered with a solid box, in every frame, so a value you filled is never in the picture. Everything else is captured as it renders, including personal data the site itself puts on screen — a delivery name, phone or address that is visible will be in the image. Use scroll first to bring the part you want into view.',
+      inputSchema: { sessionId },
+    },
+    async ({ sessionId: sid }) => outImage('page_image', await deps.handlers.page_image(caller, sid as SessionId)),
   );
 
   server.registerTool(
