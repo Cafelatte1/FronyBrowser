@@ -61,6 +61,8 @@ beforeAll(async () => {
     <a href="${originOf(pgServer)}/outside">외부 링크</a>
     <a href="/goods/1">상품A</a><img alt="상품A" src="data:,"><img alt="" src="data:,">
     <a href="/goods/2">상품B<img alt="최대 500원 적립" src="data:,"></a><img alt="배송 아이콘" src="data:,">
+    <div id="scrollbox" style="height:60px;overflow:auto" onscroll="document.getElementById('scroll-status').textContent='컨테이너 스크롤됨'"><div style="height:400px"></div><button>깊은 버튼</button></div>
+    <div id="scroll-status"></div>
     <div><button></button><button></button><button></button></div>
     <a href="/goods/3">긴이름 상품 <span>정말 아주 길고 긴 상품 설명이 이어지는 카드입니다 넉넉하게 담아 두고 드세요</span> 24,900원 32% 16,900원</a>
     <p>배송은 보통 이틀 걸립니다</p>
@@ -337,5 +339,23 @@ describe('lean 기본 출력 (FWL-044, FWL-059) — 장식과 중복만 빼고, 
     const line = lean.tree.split('\n').find((l) => l.includes('- link "긴이름 상품'));
     expect(line).toContain('… 16,900원'); // 잘려 나간 쪽에 있던 실제 결제가
     expect(line).not.toContain('32%'); // 그 사이 텍스트는 실제로 잘렸다
+  }, 30_000);
+});
+
+describe('scroll (FWL-061)', () => {
+  it('요소를 품은 스크롤 컨테이너를 움직이고, 기존 ref를 무효화하지 않는다', async () => {
+    const before = await target.snapshot(sid);
+    expect(before.tree).not.toContain('컨테이너 스크롤됨');
+    const deep = refOf(before.tree, 'button', '깊은 버튼');
+    const cart = refOf(before.tree, 'button', '장바구니 담기');
+
+    await target.act(sid, { kind: 'scroll', ref: deep });
+
+    // 스크롤은 세대를 올리지 않는다 — 스크롤 전에 받은 ref가 그대로 듣는다 (여기서 새 스냅샷을 찍으면 확인이 안 된다)
+    await expect(target.act(sid, { kind: 'click', ref: cart })).resolves.toBeDefined();
+
+    // onscroll이 컨테이너에 걸려 있다 — 창이 아니라 그 div가 움직였다는 증거다
+    const after = await target.snapshot(sid);
+    expect(after.tree).toContain('컨테이너 스크롤됨');
   }, 30_000);
 });

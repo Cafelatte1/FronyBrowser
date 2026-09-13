@@ -15,6 +15,7 @@ export const HANDLERS = [
   'fill',
   'click',
   'select',
+  'scroll',
   'navigate',
   'wait',
   'page_switch',

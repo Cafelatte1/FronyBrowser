@@ -25,6 +25,8 @@ export type Intent =
   | { readonly kind: 'keypad_sprite'; readonly ref: Ref; readonly keySelector: string; readonly cellSelector: string; readonly resolver: KeypadResolver; readonly value: string }
   | { readonly kind: 'click'; readonly ref: Ref }
   | { readonly kind: 'select'; readonly ref: Ref; readonly option: string }
+  /** 요소가 보이도록 스크롤 (FWL-061). 페이지가 아니라 그 요소를 품은 스크롤 컨테이너를 움직인다 — 모달·사이드패널 안에서도 듣는다 */
+  | { readonly kind: 'scroll'; readonly ref: Ref }
   | { readonly kind: 'navigate'; readonly url: string }
   | { readonly kind: 'wait'; readonly ref: Ref; readonly timeoutMs: number };
 

@@ -29,7 +29,7 @@ Responses: every tool returns JSON, either { "ok": true, ... } or { "ok": false,
 
 Values never come back: page_tree omits input values, fill responses carry only the key name and length, and any vault value a page echoes is replaced by [REDACTED:key].
 
-Sessions: one session is bound to one exact origin and holds an exclusive lease on it. A session expires after a period without activity (15 minutes unless the operator configured otherwise); every action extends it. Calling session_begin again for an origin your own earlier session still holds replaces that session; lease_conflict means another client holds it. A stored login for the origin, if any, is injected at session_begin and reported as storedLogin; it may have expired, so check the login state on the page either way. A logged-out session is normal — log in yourself with the origin's {{vault:...login.id}} / {{vault:...login.password}} keys where the calling service says, and end with session_end(loggedIn=true) so the login is stored for the next session. Tool order within this server: session_begin → page_tree → click / fill / select / navigate / wait (page_tree again whenever the page changes) → session_end. When a click opens a new tab, that tab becomes the current page on its own; session_status lists the open pages and page_switch goes back to one of them. Grant issuance and the order of purchase steps follow the calling service's instructions; this server only verifies grants.`;
+Sessions: one session is bound to one exact origin and holds an exclusive lease on it. A session expires after a period without activity (15 minutes unless the operator configured otherwise); every action extends it. Calling session_begin again for an origin your own earlier session still holds replaces that session; lease_conflict means another client holds it. A stored login for the origin, if any, is injected at session_begin and reported as storedLogin; it may have expired, so check the login state on the page either way. A logged-out session is normal — log in yourself with the origin's {{vault:...login.id}} / {{vault:...login.password}} keys where the calling service says, and end with session_end(loggedIn=true) so the login is stored for the next session. Tool order within this server: session_begin → page_tree → click / fill / select / scroll / navigate / wait (page_tree again whenever the page changes) → session_end. When a click opens a new tab, that tab becomes the current page on its own; session_status lists the open pages and page_switch goes back to one of them. Grant issuance and the order of purchase steps follow the calling service's instructions; this server only verifies grants.`;
 
 const sessionId = z.string().describe('Session id returned by session_begin.');
 const ref = z.string().describe('Element ref from the latest page_tree, e.g. "7:e42". Not a CSS selector; refs expire on the next page_tree.');
@@ -179,6 +179,16 @@ export function buildMcpServer(deps: McpDeps, caller: Caller): McpServer {
     },
     async ({ sessionId: sid, ref: r, option }) =>
       out('select', await deps.handlers.select(caller, sid as SessionId, r as Ref, option)),
+  );
+
+  server.registerTool(
+    'scroll',
+    {
+      description:
+        'Scroll until the element is in view. It moves whatever scroll container the element sits in, so it also reaches inside a modal or a side panel, where scrolling the window would do nothing. Refs stay valid — scrolling starts no new page_tree generation, so you can keep using the refs you already have.',
+      inputSchema: { sessionId, ref },
+    },
+    async ({ sessionId: sid, ref: r }) => out('scroll', await deps.handlers.scroll(caller, sid as SessionId, r as Ref)),
   );
 
   server.registerTool(

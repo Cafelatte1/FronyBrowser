@@ -480,6 +480,22 @@ export function createHandlers(deps: HandlerDeps) {
       }
     },
 
+    /** 요소가 보이도록 스크롤 (FWL-061). 세대를 올리지 않으므로 호출 전후의 ref가 모두 유효하다 */
+    async scroll(caller: Caller, id: SessionId, ref: Ref): Promise<Result<{ url: string }>> {
+      const found = session(caller, id);
+      if (!found.ok) return found;
+      const target = targetOf(found.session);
+      try {
+        const r = await target.act(id, { kind: 'scroll', ref });
+        audit.append({ evt: 'scroll', ...baseAudit(found.session, caller), origin: null, ref: String(ref), role: r.role ?? null });
+        return { ok: true, url: r.url };
+      } catch (e) {
+        const f = toFailure(e);
+        audit.append({ evt: 'action_failed', ...baseAudit(found.session, caller), origin: null, kind: 'scroll', ref: String(ref), code: f.error.code });
+        return f;
+      }
+    },
+
     async wait(caller: Caller, id: SessionId, ref: Ref, timeoutMs: number): Promise<Result<object>> {
       const found = session(caller, id);
       if (!found.ok) return found;

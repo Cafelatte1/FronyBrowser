@@ -312,6 +312,16 @@ export function createPlaywrightTarget(pool: BrowserPool, opts: PlaywrightTarget
           }, 'element_not_actionable');
           break;
         }
+        case 'scroll': {
+          const entry = entryOf(s, intent.ref);
+          role = entry.role;
+          // 새 세대를 열지 않는다 — 스크롤은 DOM을 바꾸지 않으므로 기존 ref가 그대로 유효하다
+          await guarded(
+            () => (entry.handle as unknown as ElementHandle).scrollIntoViewIfNeeded({ timeout }),
+            'element_not_actionable',
+          );
+          break;
+        }
         case 'wait':
           await guarded(
             () => handleOf(s, intent.ref).waitForElementState('visible', { timeout: intent.timeoutMs }),
