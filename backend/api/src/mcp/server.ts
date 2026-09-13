@@ -25,14 +25,14 @@ export type McpDeps = {
 
 export const INSTRUCTIONS = `FronyBrowser is a secure browser. It fills personal data (card numbers, login passwords, payment PINs) from a server-side vault by key name: you send "{{vault:key}}" placeholders and never see, receive, or need the value.
 
-Responses: every tool returns JSON, either { "ok": true, ... } or { "ok": false, "error": { "code", "message", "retriable" } }. "retriable": true (stale_ref, element_not_actionable, session_limit, lease_conflict, navigation_failed, timeout) means the same call may succeed later; after stale_ref take a new snapshot first. These codes need a human and must not be retried — report the code to the user and stop: vault_locked (the operator runs "wallet unlock"), keypad_unresolved (the secure keypad's markup changed), grant_required / grant_invalid (the pay grant is missing, expired, already used, or for another session), key_held (the operator held this key back from test runs).
+Responses: every tool returns JSON, either { "ok": true, ... } or { "ok": false, "error": { "code", "message", "retriable" } }. "retriable": true (stale_ref, element_not_actionable, session_limit, lease_conflict, navigation_failed, timeout) means the same call may succeed later; after stale_ref take a new page_tree first. These codes need a human and must not be retried — report the code to the user and stop: vault_locked (the operator runs "wallet unlock"), keypad_unresolved (the secure keypad's markup changed), grant_required / grant_invalid (the pay grant is missing, expired, already used, or for another session), key_held (the operator held this key back from test runs).
 
-Values never come back: snapshots omit input values, fill responses carry only the key name and length, and any vault value a page echoes is replaced by [REDACTED:key].
+Values never come back: page_tree omits input values, fill responses carry only the key name and length, and any vault value a page echoes is replaced by [REDACTED:key].
 
-Sessions: one session is bound to one exact origin and holds an exclusive lease on it. A session expires after a period without activity (15 minutes unless the operator configured otherwise); every action extends it. Calling session_begin again for an origin your own earlier session still holds replaces that session; lease_conflict means another client holds it. A stored login for the origin, if any, is injected at session_begin and reported as storedLogin; it may have expired, so check the login state on the page either way. A logged-out session is normal — log in yourself with the origin's {{vault:...login.id}} / {{vault:...login.password}} keys where the calling service says, and end with session_end(loggedIn=true) so the login is stored for the next session. Tool order within this server: session_begin → snapshot → click / fill / select / navigate / wait (snapshot again whenever the page changes) → session_end. When a click opens a new tab, that tab becomes the current page on its own; session_status lists the open pages and page_switch goes back to one of them. Grant issuance and the order of purchase steps follow the calling service's instructions; this server only verifies grants.`;
+Sessions: one session is bound to one exact origin and holds an exclusive lease on it. A session expires after a period without activity (15 minutes unless the operator configured otherwise); every action extends it. Calling session_begin again for an origin your own earlier session still holds replaces that session; lease_conflict means another client holds it. A stored login for the origin, if any, is injected at session_begin and reported as storedLogin; it may have expired, so check the login state on the page either way. A logged-out session is normal — log in yourself with the origin's {{vault:...login.id}} / {{vault:...login.password}} keys where the calling service says, and end with session_end(loggedIn=true) so the login is stored for the next session. Tool order within this server: session_begin → page_tree → click / fill / select / navigate / wait (page_tree again whenever the page changes) → session_end. When a click opens a new tab, that tab becomes the current page on its own; session_status lists the open pages and page_switch goes back to one of them. Grant issuance and the order of purchase steps follow the calling service's instructions; this server only verifies grants.`;
 
 const sessionId = z.string().describe('Session id returned by session_begin.');
-const ref = z.string().describe('Element ref from the latest snapshot, e.g. "7:e42". Not a CSS selector; refs expire on the next snapshot.');
+const ref = z.string().describe('Element ref from the latest page_tree, e.g. "7:e42". Not a CSS selector; refs expire on the next page_tree.');
 
 export function buildMcpServer(deps: McpDeps, caller: Caller): McpServer {
   const server = new McpServer({ name: 'FronyBrowser', version: '0.1.0' }, { instructions: INSTRUCTIONS });
@@ -75,7 +75,7 @@ export function buildMcpServer(deps: McpDeps, caller: Caller): McpServer {
   server.registerTool(
     'session_status',
     {
-      description: 'URL of the current page, the list of open pages ({ index, url, current } — url without query string), snapshot generation, remaining TTL and the held origin lease of one session. A newly opened tab becomes the current page by itself; use page_switch only to go back to another listed page.',
+      description: 'URL of the current page, the list of open pages ({ index, url, current } — url without query string), page_tree generation, remaining TTL and the held origin lease of one session. A newly opened tab becomes the current page by itself; use page_switch only to go back to another listed page.',
       inputSchema: { sessionId },
     },
     async ({ sessionId: sid }) =>
@@ -86,7 +86,7 @@ export function buildMcpServer(deps: McpDeps, caller: Caller): McpServer {
     'page_switch',
     {
       description:
-        'Make one of the open pages listed by session_status the current page, e.g. to return to the product tab after a click opened an ad in a new tab. Refs of the page you leave go stale; take a new snapshot. stale_ref means the index no longer exists — read session_status again. The next tab the site opens becomes current again by itself. There is no tool to close a tab; session_end closes them all.',
+        'Make one of the open pages listed by session_status the current page, e.g. to return to the product tab after a click opened an ad in a new tab. Refs of the page you leave go stale; take a new page_tree. stale_ref means the index no longer exists — read session_status again. The next tab the site opens becomes current again by itself. There is no tool to close a tab; session_end closes them all.',
       inputSchema: { sessionId, index: z.number().int().min(0).describe('index from session_status.pages.') },
     },
     async ({ sessionId: sid, index }) => out('page_switch', await deps.handlers.page_switch(caller, sid as SessionId, index)),
@@ -107,19 +107,19 @@ export function buildMcpServer(deps: McpDeps, caller: Caller): McpServer {
   );
 
   server.registerTool(
-    'snapshot',
+    'page_tree',
     {
       description:
-        'Element tree (role / name / ref) of the current page, all frames included. By default the tree is lean: it leaves out only decoration and what another line already says — decorative images (no name, inside a link or button, or the same name as the element next to them), footer / legal regions, and text that an element line already carries as its name. Body text itself is kept, so an inline error, a stock notice or the result of a click shows up as a text line. A run of identical unnamed elements (a secure keypad) is folded into one line "×N [ref=first..last]" — every ref in that range is valid. Pass raw: true for the complete unfiltered tree; refs are the same in both modes. A name is cut at 60 characters and the cut is marked "…"; if the cut drops a price, that price is appended, so a product card still shows what it costs. The current page follows the browser: when a click opens a new tab, that tab becomes the current page for every later call. Role "clickable" marks an element with no proper role that only has a click handler (e.g. a cursor:pointer div); when a button or link with the same label exists, prefer that one. Links to the same origin carry href=<path> (query string removed), usable with navigate. Input values are never included. Taking a new snapshot invalidates every earlier ref (stale_ref). To narrow further pass filter: "interactive" (buttons, links, fields and clickables only) or ref: <ref> (only that element\'s subtree).',
+        'Element tree (role / name / ref) of the current page, all frames included. By default the tree is lean: it leaves out only decoration and what another line already says — decorative images (no name, inside a link or button, or the same name as the element next to them), footer / legal regions, and text that an element line already carries as its name. Body text itself is kept, so an inline error, a stock notice or the result of a click shows up as a text line. A run of identical unnamed elements (a secure keypad) is folded into one line "×N [ref=first..last]" — every ref in that range is valid. Pass raw: true for the complete unfiltered tree; refs are the same in both modes. A name is cut at 60 characters and the cut is marked "…"; if the cut drops a price, that price is appended, so a product card still shows what it costs. The current page follows the browser: when a click opens a new tab, that tab becomes the current page for every later call. Role "clickable" marks an element with no proper role that only has a click handler (e.g. a cursor:pointer div); when a button or link with the same label exists, prefer that one. Links to the same origin carry href=<path> (query string removed), usable with navigate. Input values are never included. Taking a new page_tree invalidates every earlier ref (stale_ref). To narrow further pass filter: "interactive" (buttons, links, fields and clickables only) or ref: <ref> (only that element\'s subtree).',
       inputSchema: {
         sessionId,
-        ref: ref.optional().describe('Return only this element\'s subtree. Must come from the latest snapshot.'),
+        ref: ref.optional().describe('Return only this element\'s subtree. Must come from the latest page_tree.'),
         filter: z.enum(['interactive']).optional().describe('"interactive": only buttons, links, form fields, ARIA widgets and clickables.'),
         raw: z.boolean().optional().describe('true: the complete tree with nothing left out (images, footer, text already shown as an element name, no folding).'),
       },
     },
     async ({ sessionId: sid, ref: r, filter, raw }) =>
-      out('snapshot', await deps.handlers.snapshot(caller, sid as SessionId, {
+      out('page_tree', await deps.handlers.page_tree(caller, sid as SessionId, {
         ...(r === undefined ? {} : { ref: r as Ref }),
         ...(filter === undefined ? {} : { filter }),
         ...(raw === undefined ? {} : { raw }),

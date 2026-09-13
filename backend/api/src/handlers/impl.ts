@@ -223,7 +223,7 @@ export function createHandlers(deps: HandlerDeps) {
       }
     },
 
-    async snapshot(caller: Caller, id: SessionId, opts: SnapshotOptions = {}): Promise<Result<{ snapshot: SnapshotBody }>> {
+    async page_tree(caller: Caller, id: SessionId, opts: SnapshotOptions = {}): Promise<Result<{ snapshot: SnapshotBody }>> {
       const found = session(caller, id);
       if (!found.ok) return found;
       const target = targetOf(found.session);
@@ -231,7 +231,7 @@ export function createHandlers(deps: HandlerDeps) {
         const snap = await target.snapshot(id, opts);
         // 스냅샷을 언제 읽었는지가 남아야 나중에 세션을 재구성할 수 있다 (FWL-030). 트리 본문은 싣지 않는다
         audit.append({
-          evt: 'snapshot',
+          evt: 'page_tree',
           ...baseAudit(found.session, caller),
           origin: null,
           generation: snap.gen,
@@ -246,7 +246,7 @@ export function createHandlers(deps: HandlerDeps) {
           evt: 'action_failed',
           ...baseAudit(found.session, caller),
           origin: null,
-          kind: 'snapshot',
+          kind: 'page_tree',
           code: f.error.code,
         });
         return f;

@@ -11,7 +11,7 @@ export const HANDLERS = [
   'session_list',
   'session_status',
   'session_end',
-  'snapshot',
+  'page_tree',
   'fill',
   'click',
   'select',

@@ -3,7 +3,7 @@
 A browser-automation MCP server that fills personal data into web pages without ever
 showing the value to the AI agent.
 
-The agent drives the browser through MCP (snapshot, navigate, fill, click) and refers
+The agent drives the browser through MCP (page_tree, navigate, fill, click) and refers
 to secrets by key name only:
 
 ```
@@ -11,8 +11,8 @@ fill(ref: "7:e42", value: "{{vault:card.personal.number}}")
 ```
 
 The placeholder is resolved inside this process and typed into the page over CDP. The
-value never appears in a tool result, a snapshot, a log, or an error message — every
-response leaves through one scrubbing exit, snapshots never carry input values, and the
+value never appears in a tool result, a page tree, a log, or an error message — every
+response leaves through one scrubbing exit, the page tree never carries input values, and the
 tool surface is a whitelist (no script execution, no HTML dump). Why each of those holds
 is in CLAUDE.md, "Absolute rules".
 
@@ -66,7 +66,7 @@ selectors and amount checks all arrive per call from the calling service.
 ## Tools
 
 - Session: `session_begin`, `session_list`, `session_status`, `session_end`
-- Page: `snapshot`, `navigate`, `fill`, `click`, `select`, `wait`, `page_switch`
+- Page: `page_tree`, `navigate`, `fill`, `click`, `select`, `wait`, `page_switch`
 - Vault: `vault_list` (names, types, labels and the grant flag — never values or their lengths)
 
 The folder `backend/api/src/handlers/` is the whitelist: a capability that has no handler there does

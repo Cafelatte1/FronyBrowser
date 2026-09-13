@@ -27,7 +27,10 @@ export type EgressContext = {
  * 1. 구조적 필터 — input/textarea의 value 제거. 값을 몰라도 동작한다
  * 2. 스크러버 — live vault 값 + variants() 평문 매칭
  *
- * 2단계 히트는 1단계가 못 막은 경로가 있다는 신호다. 정상은 0이다.
+ * 2단계 히트는 이상 신호가 아니다. 주된 경우는 사이트가 **자기가 이미 아는 사용자 정보**를
+ * 화면에 그린 것이다 — 배송지의 이름·전화·주소, 로그인된 계정 아이디. 입력창이 아니라 본문
+ * 텍스트라서 1단계는 여기서 지울 게 없고, 2단계가 유일한 방어다. 실측(2026-09-13): 감사
+ * 레코드 1,183건 중 scrub_hit 172건, 전부 page_tree에서 나왔다. 0을 기대하지 말 것.
  */
 export function scrub<T>(payload: Result<T>, ctx: EgressContext): ScrubbedResponse<Result<T>> {
   const { value, hits } = scrubDeep(payload, ctx.scrubEntries);

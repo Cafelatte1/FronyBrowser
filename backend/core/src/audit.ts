@@ -13,12 +13,12 @@ export type AuditEvent =
   | 'fill' | 'click' | 'select' | 'navigate' | 'page_switch'
   /**
    * 액션이 실패했다 (FWL-030). 세션을 나중에 재구성하려면 실패 지점도 남아야 한다.
-   * 필드: kind('navigate'|'click'|'fill'|'select'|'wait'|'snapshot'), ref?, code(호출자에게 돌려준 에러 코드).
+   * 필드: kind('navigate'|'click'|'fill'|'select'|'wait'|'page_tree'), ref?, code(호출자에게 돌려준 에러 코드).
    * fill 실패는 key만 남긴다 — len은 없다 (규칙 5)
    */
   | 'action_failed'
   /** 스냅샷을 읽었다 (FWL-030). 필드: generation, pages */
-  | 'snapshot'
+  | 'page_tree'
   /** 요소 대기가 끝났다 (FWL-030). 필드: ref, timeoutMs */
   | 'wait'
   | 'policy_denied' | 'grant_denied'
