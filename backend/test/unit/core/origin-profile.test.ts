@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import type { BrowserLaunchProfile } from '@wallet/core';
-import { createOriginProfiles, profileLabel, sameProfile } from '@wallet/core';
+import { createOriginProfiles, sameProfile } from '@wallet/core';
 
 const dir = mkdtempSync(join(tmpdir(), 'wallet-originprofile-'));
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
@@ -62,7 +62,5 @@ describe('origin별 기동 조합 기억', () => {
     expect(sameProfile(got, CHROME_HEADFUL)).toBe(true);
     expect(sameProfile(got, { kind: 'browser', browser: 'chrome', headless: true })).toBe(false);
     expect(sameProfile(got, CHROMIUM_HEADLESS)).toBe(false);
-    expect(profileLabel(got)).toBe('chrome/headful');
-    expect(profileLabel(CHROMIUM_HEADLESS)).toBe('chromium/headless');
   });
 });

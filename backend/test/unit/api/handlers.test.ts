@@ -661,29 +661,26 @@ describe('origin별 기동 조합 기억 (FWL-065)', () => {
     expect(originProfiles.get(ORIGIN)).toBeUndefined();
   });
 
-  it('기억과 다른 조합을 지목하면 열지 않고 거절한다 — 통했던 조합을 알려 준다', async () => {
-    const { handlers, audit, state } = withMemory({ browser: 'chrome', headless: false });
+  it('지목한 조합은 기억과 달라도 그대로 연다 — 기억이 호출자를 막지 않는다 (FWL-067)', async () => {
+    const { handlers, state } = withMemory({ browser: 'chrome', headless: false });
     const r = await handlers.session_begin(caller, { origin: ORIGIN, browser: 'chromium', headless: true });
-    if (r.ok) throw new Error('should fail');
-    expect(r.error.code).toBe('profile_mismatch');
-    expect(r.error.retriable).toBe(false);
-    expect(r.error.message).toContain('chrome/headful');
-    expect(state.opened).toHaveLength(0); // 브라우저를 띄우지도 않았다
-    expect(audit.records.find((x) => x.evt === 'action_failed')).toMatchObject({
-      sid: null, // 세션을 열기 전에 막았다
-      kind: 'session_begin',
-      code: 'profile_mismatch',
-      origin: ORIGIN,
-      remembered: 'chrome/headful',
-      profile: { kind: 'browser', browser: 'chromium', headless: true },
-    });
+    expect(r.ok).toBe(true);
+    expect(state.opened[0]).toEqual({ origin: ORIGIN, kind: 'browser', browser: 'chromium', headless: true });
   });
 
-  it('기억과 같은 조합을 지목하는 건 통과한다', async () => {
-    const { handlers, state } = withMemory({ browser: 'chrome', headless: false });
+  it('사이트가 바뀌어도 기억을 새 조합으로 갈아탈 수 있다 — 막혔다면 write-once가 됐을 경로다 (FWL-067)', async () => {
+    const { handlers, originProfiles } = withMemory({ browser: 'chromium', headless: true });
     const r = await handlers.session_begin(caller, { origin: ORIGIN, browser: 'chrome', headless: false });
+    if (!r.ok) throw new Error(r.error.code);
+    await handlers.session_end(caller, r.sessionId, true);
+    expect(originProfiles.get(ORIGIN)).toMatchObject({ browser: 'chrome', headless: false });
+  });
+
+  it('일부만 지목해도 기억은 끼어들지 않는다 — headless만 준 경우도 호출자 뜻대로다', async () => {
+    const { handlers, state } = withMemory({ browser: 'chrome', headless: false });
+    const r = await handlers.session_begin(caller, { origin: ORIGIN, headless: true });
     expect(r.ok).toBe(true);
-    expect(state.opened[0]).toEqual({ origin: ORIGIN, kind: 'browser', browser: 'chrome', headless: false });
+    expect(state.opened[0]).toEqual({ origin: ORIGIN, kind: 'browser', browser: 'chromium', headless: true });
   });
 
   it('기억한 조합이 아예 못 뜨면 기억을 버린다 — 크롬이 사라져도 영구히 막히지 않는다', async () => {
@@ -697,7 +694,7 @@ describe('origin별 기동 조합 기억 (FWL-065)', () => {
     expect(originProfiles.get(ORIGIN)).toBeUndefined();
   });
 
-  it('기억 저장소가 없으면 검사도 기억도 없다 — 호출자 말을 그대로 따른다 (기존 동작)', async () => {
+  it('기억 저장소가 아예 없어도 동작은 같다 — 지목한 조합이 늘 이긴다', async () => {
     const { handlers, state } = setup();
     const r = await handlers.session_begin(caller, { origin: 'https://shop.com', browser: 'chrome', headless: false });
     if (!r.ok) throw new Error(r.error.code);

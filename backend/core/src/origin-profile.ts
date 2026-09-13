@@ -10,8 +10,11 @@
  * 뜻이고, 이건 FWL-026이 저장 쿠키를 덮어쓸 때 이미 믿고 있는 바로 그 단언이다 — 새로운 신뢰 가정을
  * 만들지 않는다. 실측에서도 쿠팡은 chrome/headful만 9번 여기 도달했고 헤드리스는 3번 중 0번이었다.
  *
- * 에이전트의 단언이라 틀릴 수 있으므로 자가 치유 장치를 하나 둔다: 기억된 조합이 아예 뜨지 못하면
- * (`browser_unavailable`) 호출부가 forget을 부른다. 그 밖의 정정은 운영자가 이 파일을 지우는 일이다.
+ * 기억은 호출자가 조합을 말하지 않았을 때만 쓰인다 (FWL-067). 지목한 조합을 막지는 않는다 —
+ * 이 기억은 관찰값이고 호출자의 플레이북이 선언값인데, 파생값이 선언값을 거부하면 사이트가 정책을
+ * 바꾼 날 되돌릴 길이 없어진다 (기억을 고치려면 새 조합으로 로그인해야 하는데, 그 조합으로는 세션이
+ * 안 열리므로 write-once가 된다). 그래서 낡은 기억의 최악은 "오늘과 같은 상태로 퇴화"다.
+ * 기억된 조합이 아예 뜨지 못하면 (`browser_unavailable`) 호출부가 forget을 불러 스스로 지운다.
  */
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -33,11 +36,6 @@ export interface OriginProfiles {
 
 export function sameProfile(a: RememberedProfile, b: BrowserLaunchProfile): boolean {
   return a.browser === b.browser && a.headless === b.headless;
-}
-
-/** `chrome/headful` — 에러 메시지와 감사에 쓰는 표기. 값이 아니라 설정이므로 밖으로 나가도 된다 */
-export function profileLabel(p: RememberedProfile | BrowserLaunchProfile): string {
-  return `${p.browser}/${p.headless ? 'headless' : 'headful'}`;
 }
 
 export function createOriginProfiles(file: string): OriginProfiles {

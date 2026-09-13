@@ -16,7 +16,6 @@ export type AuditEvent =
    * 필드: kind('session_begin'|'navigate'|'click'|'fill'|'select'|'scroll'|'wait'|'page_tree'|'page_image'), ref?, code(호출자에게 돌려준 에러 코드).
    * kind가 'session_begin'이면 profile과 reason('not_installed'|'launch_failed')이 붙는다 (FWL-063) —
    * 호출자에게는 안 나가는 분류값이고, 운영자가 무엇을 고쳐야 하는지 아는 유일한 단서다.
-   * code가 'profile_mismatch'면 remembered가 함께 붙고 sid는 null이다 (FWL-065) — 세션을 열기 전에 막았다는 뜻이다.
    * fill 실패는 key만 남긴다 — len은 없다 (규칙 5)
    */
   | 'action_failed'

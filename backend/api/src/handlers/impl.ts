@@ -25,7 +25,7 @@ import type {
 } from '@wallet/core';
 import { KeyNotFoundError, VaultLockedError, fail, failFromUnknown, findKeys, markGrantUsed, resolve, verifyPayGrant, writeUnlockHandoff } from '@wallet/core';
 import type { BrowserProfile, Cipher, KeypadSpec, LaunchProfile, OriginProfiles, PageImage, Ref, SnapshotOptions, TargetKind, TestMode } from '@wallet/core';
-import { isBrowserProfile, profileLabel, sameProfile } from '@wallet/core';
+import { isBrowserProfile } from '@wallet/core';
 import { TargetError } from '@wallet/app';
 
 export type HandlerDeps = {
@@ -119,29 +119,13 @@ export function createHandlers(deps: HandlerDeps) {
       const wanted: LaunchProfile = kind === 'browser'
         ? { kind, browser: req.browser ?? 'chromium', headless: req.headless ?? true }
         : { kind };
+      // 호출자가 조합을 말하지 않았을 때만, 이 origin이 로그인까지 갔던 조합으로 채운다 (FWL-065, FWL-067).
+      // 지목한 조합을 거부하지는 않는다 — 기억은 관찰값이고 호출자의 플레이북이 선언값이다.
+      // 파생값이 선언값을 막으면 사이트 정책이 바뀐 날 되돌릴 방법이 없어진다
       let profile = wanted;
-      // 이 origin이 로그인까지 갔던 조합이 있으면 그게 이긴다 (FWL-065). 호출자가 아무 말도 안 했으면 그대로 쓰고,
-      // 다른 걸 지목했으면 열지 않고 거절한다 — 차단은 정상 응답으로 도착하므로 조용히 진행하면
-      // 에이전트가 막힌 페이지를 읽으며 헤매는 것으로 끝난다
-      if (isBrowserProfile(wanted)) {
+      if (isBrowserProfile(wanted) && req.browser === undefined && req.headless === undefined) {
         const remembered = deps.originProfiles?.get(req.origin);
-        if (remembered && req.browser === undefined && req.headless === undefined) {
-          profile = { kind: 'browser', browser: remembered.browser, headless: remembered.headless };
-        } else if (remembered && !sameProfile(remembered, wanted)) {
-          // 세션을 열기 전이라 sid가 없다. 조합은 값이 아니라 설정이므로 감사와 메시지 양쪽에 그대로 적는다 (규칙 5)
-          audit.append({
-            evt: 'action_failed',
-            sid: null,
-            client: caller.client,
-            traceId: req.traceId ?? null,
-            origin: req.origin,
-            kind: 'session_begin',
-            code: 'profile_mismatch',
-            profile: wanted,
-            remembered: profileLabel(remembered),
-          });
-          return fail('profile_mismatch', `${req.origin} last logged in with ${profileLabel(remembered)}; asked for ${profileLabel(wanted)}`);
-        }
+        if (remembered) profile = { kind: 'browser', browser: remembered.browser, headless: remembered.headless };
       }
       const begun = sessions.begin(caller.client, req, profile);
       if (!begun.ok) {

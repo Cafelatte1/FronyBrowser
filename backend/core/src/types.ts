@@ -130,8 +130,6 @@ export const ERROR_CODES = {
   session_limit: { retriable: true },
   lease_conflict: { retriable: true },
   browser_unavailable: { retriable: false },
-  /** 이 origin이 로그인까지 간 기동 조합과 다른 조합을 요청했다 (FWL-065). 아무것도 열지 않았다 — 에러가 통했던 조합을 알려 준다 */
-  profile_mismatch: { retriable: false },
   approval_denied: { retriable: false },
   approval_expired: { retriable: false },
   navigation_failed: { retriable: true },
