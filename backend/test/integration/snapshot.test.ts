@@ -62,6 +62,7 @@ beforeAll(async () => {
     <a href="/goods/1">상품A</a><img alt="상품A" src="data:,"><img alt="" src="data:,">
     <a href="/goods/2">상품B<img alt="최대 500원 적립" src="data:,"></a><img alt="배송 아이콘" src="data:,">
     <div><button></button><button></button><button></button></div>
+    <a href="/goods/3">긴이름 상품 <span>정말 아주 길고 긴 상품 설명이 이어지는 카드입니다 넉넉하게 담아 두고 드세요</span> 24,900원 32% 16,900원</a>
     <p>배송은 보통 이틀 걸립니다</p>
     <footer><a href="/terms">이용약관</a><p>사업자등록번호 000-00-00000</p></footer>
     <script>
@@ -130,8 +131,8 @@ describe('snapshot — 규칙 1', () => {
     expect(clickables).toEqual([expect.stringContaining('- clickable "추가금액 없이 구매하기" [ref=')]);
     expect(snap.tree).toContain('- button "카드 안의 버튼" [ref=');
     await target.act(sid, { kind: 'click', ref: refOf(snap.tree, 'clickable', '추가금액 없이 구매하기') });
-    snap = await target.snapshot(sid, { text: true });
-    expect(snap.tree).toContain('- text "팝업 통과"');
+    snap = await target.snapshot(sid);
+    expect(snap.tree).toContain('- text "팝업 통과"'); // 클릭 결과는 기본 출력에 있어야 한다 (FWL-059)
   }, 30_000);
 
   it('fill 이후에도 값은 스냅샷에 나타나지 않는다', async () => {
@@ -272,7 +273,7 @@ describe('새 탭 자동 추적 (FWL-043)', () => {
   }, 30_000);
 });
 
-describe('lean 기본 출력 (FWL-044) — 액션도 정보도 없는 줄을 빼고, 남는 ref는 raw와 같다', () => {
+describe('lean 기본 출력 (FWL-044, FWL-059) — 장식과 중복만 빼고, 남는 ref는 raw와 같다', () => {
   const refOf2 = (tree: string, label: string): string => {
     const line = tree.split('\n').find((l) => l.includes(`"${label}" [ref=`));
     if (!line) throw new Error(`no ref for ${label}`);
@@ -280,7 +281,7 @@ describe('lean 기본 출력 (FWL-044) — 액션도 정보도 없는 줄을 빼
   };
   const idx = (ref: string): string => ref.split(':')[1] as string;
 
-  it('이름 없는 img·인접 요소와 같은 이름의 img·푸터·가격 아닌 본문이 빠지고, 빈 이름 연속은 ×N으로 접힌다', async () => {
+  it('이름 없는 img·인접 요소와 같은 이름의 img·푸터가 빠지고, 빈 이름 연속은 ×N으로 접힌다', async () => {
     const lean = await target.snapshot(sid);
     const raw = await target.snapshot(sid, { raw: true });
     expect(lean.tree.split('\n').length).toBeLessThan(raw.tree.split('\n').length);
@@ -291,8 +292,8 @@ describe('lean 기본 출력 (FWL-044) — 액션도 정보도 없는 줄을 빼
     expect(lean.tree).toContain('- link "상품A" [ref=');
     expect(lean.tree).not.toContain('이용약관');
     expect(lean.tree).not.toContain('사업자등록번호');
-    expect(lean.tree).not.toContain('배송은 보통 이틀');
-    expect(lean.tree).toContain('- text "총 결제금액 15,000원"'); // 가격은 남는다
+    expect(lean.tree).toContain('배송은 보통 이틀'); // 본문은 남는다 — 가격만 남기던 규칙은 FWL-059에서 없앴다
+    expect(lean.tree).toContain('- text "총 결제금액 15,000원"');
     expect(lean.tree).toMatch(/- button "" ×3 \[ref=\d+:e\d+\.\.\d+:e\d+\]/);
     expect(lean.tree).toContain('- heading "주문서"'); // 헤더·본문 요소는 그대로
     // raw에는 전부 있다
@@ -318,12 +319,23 @@ describe('lean 기본 출력 (FWL-044) — 액션도 정보도 없는 줄을 빼
     await expect(target.act(sid, { kind: 'click', ref: (lean.gen + 1 === raw.gen ? rawEmpty[1] : fold?.[1]) as Ref })).resolves.toBeDefined();
   }, 30_000);
 
-  it('text: true면 본문 전부, filter/ref와 조합된다', async () => {
-    const withText = await target.snapshot(sid, { text: true });
-    expect(withText.tree).toContain('배송은 보통 이틀');
-    expect(withText.tree).not.toContain('이용약관'); // 푸터는 text: true여도 빠진다
-    const lean = await target.snapshot(sid, { filter: 'interactive' });
-    expect(lean.tree).not.toContain('- img');
-    expect(lean.tree).not.toContain('이용약관');
+  it('이미 요소 이름으로 나온 텍스트는 본문 줄로 다시 내지 않는다 (FWL-059)', async () => {
+    const lean = await target.snapshot(sid);
+    expect(lean.tree).toContain('- heading "주문서"');
+    expect(lean.tree).not.toContain('- text "주문서"'); // heading 이름과 같은 텍스트
+    expect(lean.tree).not.toContain('- text "포인트 충전결제"'); // label이 radio의 이름이 됐다
+    expect(lean.tree).not.toContain('- text "추가금액 없이"'); // clickable 이름 안의 조각
+    expect(lean.tree).toContain('- text "카드 설명"'); // 어떤 이름에도 안 들어간 본문은 남는다
+    const interactive = await target.snapshot(sid, { filter: 'interactive' });
+    expect(interactive.tree).not.toContain('- img');
+    expect(interactive.tree).not.toContain('- text "');
+    expect(interactive.tree).not.toContain('이용약관');
+  }, 30_000);
+
+  it('60자에서 잘린 이름에 결제가가 붙는다 (FWL-059)', async () => {
+    const lean = await target.snapshot(sid);
+    const line = lean.tree.split('\n').find((l) => l.includes('- link "긴이름 상품'));
+    expect(line).toContain('… 16,900원'); // 잘려 나간 쪽에 있던 실제 결제가
+    expect(line).not.toContain('32%'); // 그 사이 텍스트는 실제로 잘렸다
   }, 30_000);
 });

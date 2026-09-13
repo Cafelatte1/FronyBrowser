@@ -57,7 +57,7 @@ describe('storageState 배선', () => {
     expect((await target.open(sid, { origin, kind: 'browser', browser: 'chromium', headless: true })).storedLogin).toBe(true);
     await target.act(sid, { kind: 'navigate', url: `${origin}/` });
 
-    const snap = await target.snapshot(sid, { text: true });
+    const snap = await target.snapshot(sid);
     expect(snap.tree).toContain('sid=seeded-session-123'); // 로그인 상태로 시작
 
     await target.close(sid, { persist: true }); // 에이전트가 loggedIn을 단언한 종료 (FWL-026)
@@ -71,7 +71,7 @@ describe('storageState 배선', () => {
     const sid = 's_nostate' as SessionId;
     await target.open(sid, { origin, kind: 'browser', browser: 'chromium', headless: true });
     await target.act(sid, { kind: 'navigate', url: `${origin}/` });
-    const snap = await target.snapshot(sid, { text: true });
+    const snap = await target.snapshot(sid);
     expect(snap.tree).toContain('(없음)');
     await target.close(sid);
   }, 60_000);
