@@ -150,7 +150,7 @@ export function buildMcpServer(deps: McpDeps, caller: Caller): McpServer {
     'page_image',
     {
       description:
-        'A picture of what is on screen right now — the viewport of the current page, as a PNG. Reach for it when the layout, an image or a captcha carries meaning the element tree cannot: page_tree is cheaper and is the only source of refs. Every input, textarea, select and contenteditable is covered with a solid box, in every frame, so a value you filled is never in the picture. Everything else is captured as it renders, including personal data the site itself puts on screen — a delivery name, phone or address that is visible will be in the image. Use scroll first to bring the part you want into view.',
+        'A picture of what is on screen right now — the viewport of the current page, as a PNG scaled to a 1024px long edge, which still reads cleanly and costs well under half of a full-resolution shot. Reach for it when the layout, an image or a captcha carries meaning the element tree cannot: page_tree is cheaper and is the only source of refs. Every input, textarea, select and contenteditable is covered with a solid box, in every frame, so a value you filled is never in the picture. Everything else is captured as it renders, including personal data the site itself puts on screen — a delivery name, phone or address that is visible will be in the image. Use scroll first to bring the part you want into view.',
       inputSchema: { sessionId },
     },
     async ({ sessionId: sid }) => outImage('page_image', await deps.handlers.page_image(caller, sid as SessionId)),

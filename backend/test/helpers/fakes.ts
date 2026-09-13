@@ -112,7 +112,7 @@ export function fakeTarget(opts: FakeTargetOptions = {}): FakeTarget {
     },
     image: async () => {
       takeFailure();
-      return { png: new Uint8Array([0x89, 0x50, 0x4e, 0x47]), width: 1920, height: 1080, masked: 2 };
+      return { png: new Uint8Array([0x89, 0x50, 0x4e, 0x47]), width: 1024, height: 576, masked: 2 };
     },
     extract: async () => opts.extractText ?? null,
     status: async () => ({ url, pages: [{ index: 0, url, current: true }], snapshotGen: 1 }),

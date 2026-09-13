@@ -49,6 +49,7 @@ export type SnapshotOptions = {
  */
 export type PageImage = {
   readonly png: Uint8Array;
+  /** png의 실제 픽셀 크기 — 긴 변 1024로 줄인 뒤의 값이다 (FWL-066). 뷰포트의 CSS 크기가 아니다 */
   readonly width: number;
   readonly height: number;
   /** 덮은 입력창 수. 마스킹이 실제로 돌았다는 유일한 증거라 감사에 남긴다 */
