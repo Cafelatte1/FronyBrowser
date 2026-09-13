@@ -14,6 +14,7 @@ export * from './audit.js';
 export * from './test-mode.js';
 export * from './origin-profile.js';
 export * from './unlock-handoff.js';
+export * from './image.js';
 export * from './keypad-sprite.js';
 export * from './keypad-glyphs.js';
 export * from './paths.js';

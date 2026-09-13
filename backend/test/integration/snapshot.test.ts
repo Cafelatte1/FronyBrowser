@@ -394,9 +394,12 @@ describe('page_image (FWL-062) — 규칙 1의 경계선을 픽셀에도 긋는�
     // 최상위 1 + PG 프레임 1. 프레임 순회가 빠지면 1이 되고, 그때 드러나는 게 하필 카드 필드다
     expect(img.masked).toBe(2);
 
+    // 1920 뷰포트를 긴 변 1024로 줄여 내보낸다 (FWL-066) — 좌표도 같은 비율로 줄여서 찍는다
+    expect(img.width).toBe(1024);
+    const k = img.width / 1920;
     const png = decodePng(img.png);
     const at = (x: number, y: number): string => {
-      const i = (y * png.width + x) * 4;
+      const i = (Math.round(y * k) * png.width + Math.round(x * k)) * 4;
       return [png.data[i], png.data[i + 1], png.data[i + 2]].join(',');
     };
     expect(at(150, 20)).toBe('255,0,255'); // 최상위 입력창 (0,0)~(300,40)

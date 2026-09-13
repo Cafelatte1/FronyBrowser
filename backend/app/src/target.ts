@@ -6,7 +6,7 @@
  */
 
 import type { ActionResult, ActionTarget, ErrorCode, Intent, PageImage, Ref, SafeSnapshot, SessionId } from '@wallet/core';
-import { KeypadUnresolvedError, resolveKeypadSprite, isBrowserProfile } from '@wallet/core';
+import { KeypadUnresolvedError, fitPng, resolveKeypadSprite, isBrowserProfile } from '@wallet/core';
 import type { ElementHandle, Page } from 'patchright';
 import { BrowserUnavailableError } from './context.js';
 import type { BrowserPool, LaunchFailure, SessionBrowser, StorageState } from './context.js';
@@ -24,6 +24,8 @@ export class TargetError extends Error {
 
 /** 마스크 박스 색 (FWL-062). 페이지에 자연스럽게 있을 수 없는 색이라, 가려진 자리가 사진에서 한눈에 보인다 */
 const MASK_COLOR = '#FF00FF';
+/** page_image의 긴 변 상한 (FWL-066). 1024면 페이지의 글자가 다 읽히고 토큰은 절반 이하다 — 근거는 core/image.ts */
+const IMAGE_MAX_EDGE = 1024;
 
 /** page: 현재 페이지. 새 탭이 열리면 그것으로 바뀐다 (FWL-043) — 사람이 브라우저를 쓰는 감각과 같다 */
 type SessionState = { readonly browser: SessionBrowser; readonly refs: RefTable; readonly origin: string; page: Page; readonly follow: (p: Page) => void };
@@ -196,6 +198,7 @@ export function createPlaywrightTarget(pool: BrowserPool, opts: PlaywrightTarget
      * 현재 화면 한 장 (FWL-062). 프레임마다 locator를 만들어 넘긴다 —
      * `page.locator()`는 최상위 프레임만 훑는데, 카드번호가 사는 곳은 PG사 cross-origin iframe이다 (규칙 4).
      * 한 프레임이라도 빠뜨리면 가장 지켜야 할 필드만 정확히 드러난 사진이 나온다.
+     * 찍은 뒤 긴 변 1024로 줄여서 내보낸다 (FWL-066) — 마스크는 셔터 전에 브라우저가 그리므로 축소와 무관하다.
      */
     async image(sessionId): Promise<PageImage> {
       const s = state(sessionId);
@@ -204,11 +207,10 @@ export function createPlaywrightTarget(pool: BrowserPool, opts: PlaywrightTarget
       const mask = s.page.frames().map((f) => f.locator(FIELD_SELECTOR));
       let masked = 0;
       for (const m of mask) masked += await m.count().catch(() => 0);
-      const png = await guarded(() => s.page.screenshot({ mask, maskColor: MASK_COLOR, type: 'png' }), 'timeout');
-      // 문자열로 넘긴다 — 이 패키지는 DOM lib을 안 켜서 페이지 안에서 도는 코드는 타입 검사 대상이 아니다 (snapshot.ts와 같은 방식).
-      // viewportSize()를 못 쓰는 이유: chrome 프로필은 viewport를 null로 연다 (CDP Emulation 흔적 회피, context.ts:126)
-      const size = (await s.page.evaluate('({ width: innerWidth, height: innerHeight })')) as { width: number; height: number };
-      return { png, width: size.width, height: size.height, masked };
+      const shot = await guarded(() => s.page.screenshot({ mask, maskColor: MASK_COLOR, type: 'png' }), 'timeout');
+      // 크기는 PNG에서 직접 읽는다 — 축소 뒤의 실제 픽셀 수와 응답이 어긋나지 않는 유일한 방법이다 (FWL-066)
+      const { png, width, height } = fitPng(shot, IMAGE_MAX_EDGE);
+      return { png, width, height, masked };
     },
 
     async extract(sessionId, selector) {
