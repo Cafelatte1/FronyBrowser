@@ -110,20 +110,18 @@ export function buildMcpServer(deps: McpDeps, caller: Caller): McpServer {
     'snapshot',
     {
       description:
-        'Element tree (role / name / ref) of the current page, all frames included. By default the tree is lean: decorative images (no name, inside a link or button, or the same name as the element next to them), footer / legal regions and body text other than prices are left out, and a run of identical unnamed elements (a secure keypad) is folded into one line "×N [ref=first..last]" — every ref in that range is valid. Pass text: true to include all body text, or raw: true for the complete unfiltered tree; refs are the same in every mode. The current page follows the browser: when a click opens a new tab, that tab becomes the current page for every later call. Role "clickable" marks an element with no proper role that only has a click handler (e.g. a cursor:pointer div); when a button or link with the same label exists, prefer that one. Links to the same origin carry href=<path> (query string removed), usable with navigate. Input values are never included. Taking a new snapshot invalidates every earlier ref (stale_ref). To narrow further pass filter: "interactive" (buttons, links, fields and clickables only) or ref: <ref> (only that element\'s subtree).',
+        'Element tree (role / name / ref) of the current page, all frames included. By default the tree is lean: it leaves out only decoration and what another line already says — decorative images (no name, inside a link or button, or the same name as the element next to them), footer / legal regions, and text that an element line already carries as its name. Body text itself is kept, so an inline error, a stock notice or the result of a click shows up as a text line. A run of identical unnamed elements (a secure keypad) is folded into one line "×N [ref=first..last]" — every ref in that range is valid. Pass raw: true for the complete unfiltered tree; refs are the same in both modes. A name is cut at 60 characters and the cut is marked "…"; if the cut drops a price, that price is appended, so a product card still shows what it costs. The current page follows the browser: when a click opens a new tab, that tab becomes the current page for every later call. Role "clickable" marks an element with no proper role that only has a click handler (e.g. a cursor:pointer div); when a button or link with the same label exists, prefer that one. Links to the same origin carry href=<path> (query string removed), usable with navigate. Input values are never included. Taking a new snapshot invalidates every earlier ref (stale_ref). To narrow further pass filter: "interactive" (buttons, links, fields and clickables only) or ref: <ref> (only that element\'s subtree).',
       inputSchema: {
         sessionId,
         ref: ref.optional().describe('Return only this element\'s subtree. Must come from the latest snapshot.'),
         filter: z.enum(['interactive']).optional().describe('"interactive": only buttons, links, form fields, ARIA widgets and clickables.'),
-        text: z.boolean().optional().describe('true: include all body text, not only price-like lines.'),
-        raw: z.boolean().optional().describe('true: the complete tree with nothing left out (images, footer, all text, no folding).'),
+        raw: z.boolean().optional().describe('true: the complete tree with nothing left out (images, footer, text already shown as an element name, no folding).'),
       },
     },
-    async ({ sessionId: sid, ref: r, filter, text, raw }) =>
+    async ({ sessionId: sid, ref: r, filter, raw }) =>
       out('snapshot', await deps.handlers.snapshot(caller, sid as SessionId, {
         ...(r === undefined ? {} : { ref: r as Ref }),
         ...(filter === undefined ? {} : { filter }),
-        ...(text === undefined ? {} : { text }),
         ...(raw === undefined ? {} : { raw }),
       })),
   );

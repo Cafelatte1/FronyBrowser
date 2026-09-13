@@ -36,10 +36,8 @@ export type SafeSnapshot = Brand<SnapshotBody, 'SafeSnapshot'>;
 export type SnapshotOptions = {
   readonly ref?: Ref;
   readonly filter?: 'interactive';
-  /** true면 lean 전처리 없이 전부 (FWL-044). 기본은 lean — 이름 없는 img·푸터·가격 아닌 본문을 빼고 빈 이름 연속을 접는다 */
+  /** true면 lean 전처리 없이 전부 (FWL-044). 기본은 lean — 이름 없는 img·푸터·이미 요소 이름으로 나온 텍스트를 빼고 빈 이름 연속을 접는다 */
   readonly raw?: boolean;
-  /** true면 본문 텍스트 전부. 기본은 가격처럼 보이는 줄만 */
-  readonly text?: boolean;
 };
 
 /** 컨텍스트에 열린 페이지 하나 (FWL-043). url은 origin + 경로까지 — 쿼리스트링에 토큰이 실릴 수 있다 */

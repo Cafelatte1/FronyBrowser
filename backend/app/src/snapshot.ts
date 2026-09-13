@@ -25,12 +25,14 @@ export function serialize(body: SnapshotBody): SafeSnapshot {
 const INTERACTIVE_ROLES = new Set(['button', 'link', 'textbox', 'combobox', 'checkbox', 'radio', 'switch', 'tab', 'clickable']);
 
 /**
- * 페이지 안에서 실행된다. 요소의 role·accessible name만 계산한다 —
+ * 페이지 안에서 실행된다. 요소의 role·accessible name과 본문 텍스트를 한 번에 모은다 —
  * 어떤 경로로도 `.value`를 읽지 않는다 (규칙 1의 실제 방어 지점).
  * root(요소 또는 null)를 받아 각 요소가 그 안에 있는지(inside)만 표시한다 — 수집 범위는 항상 문서 전체다.
+ * 텍스트가 같은 함수 안에 있는 이유 (FWL-059): 어떤 요소가 이름을 가져갔는지 알아야
+ * 그 안의 텍스트를 건너뛸 수 있다. 두 번 evaluate 하면 그 집합을 넘길 방법이 없다.
  */
-const COLLECT_ELEMENTS = `
-((root) => {
+const COLLECT = `
+((root, wantText) => {
   const SELECTOR = 'h1,h2,h3,h4,a[href],button,input,select,textarea,[role="button"],[role="link"],[role="checkbox"],[role="radio"],[role="switch"],[role="tab"],img[alt]';
   // 정식 role이 없는 클릭 대상 (FWL-029) — <div class="cursor-pointer"> 팝업처럼 핸들러가 위임돼
   // 속성으로는 알 수 없는 버튼. 속성이 있거나 computed cursor:pointer이면서 텍스트가 있는 요소를 "clickable"로 준다
@@ -72,6 +74,17 @@ const COLLECT_ELEMENTS = `
     copy.querySelectorAll('input,textarea,select,[contenteditable]').forEach((f) => f.remove());
     return copy.textContent;
   };
+  // 요소 텍스트에서 온 이름 (FWL-059). 상품 카드 하나가 통째로 <a>라서 60자에서 자르면
+  // 에이전트가 결제할 금액을 못 본다 — 잘려 나간 쪽에 가격이 있으면 끝에 붙인다.
+  // 여러 개면 마지막 것: 정가 다음에 할인가가 오므로 그게 실제로 낼 금액이다
+  const textName = (el) => {
+    const full = (safeText(el) || '').replace(/\\s+/g, ' ').trim();
+    if (full.length <= 60) return full;
+    const cut = full.slice(0, 60);
+    const prices = full.match(/\\d[\\d,]*\\s*원/g);
+    const last = prices ? prices[prices.length - 1] : null;
+    return last && cut.indexOf(last) === -1 ? cut + '… ' + last : cut + '…';
+  };
   const nameOf = (el) => {
     const aria = el.getAttribute('aria-label');
     if (aria) return clean(aria);
@@ -84,7 +97,7 @@ const COLLECT_ELEMENTS = `
     if (title) return clean(title);
     const tag = el.tagName.toLowerCase();
     if (tag === 'input' || tag === 'textarea' || tag === 'select') return '';
-    return clean(safeText(el));
+    return textName(el);
   };
   // 선택 상태 — 불리언만 (규칙 1은 value를 금한다, checked는 값이 아니다). 상태가 없는 요소는 null
   const stateOf = (el, role) => {
@@ -158,43 +171,46 @@ const COLLECT_ELEMENTS = `
     out.push(label);
     meta.push({ role, name: clean(safeText(label)), checked: stateOf(el, role), href: null, inside: inside(el) || inside(label), footer: inFooter(label), inAction: false });
   }
-  return { els: out, meta };
-})
-`;
-
-/**
- * 본문 텍스트. input·textarea·select 내부의 텍스트 노드는 걷지 않는다 —
- * textarea의 자식 텍스트 노드는 곧 그 값이다 (innerText를 쓰지 않는 이유).
- * contenteditable 안의 텍스트도 같은 이유로 걷지 않는다 — 입력창 역할을 하는 요소의 내용이다.
- * root가 있으면 그 아래만 걷는다 (슬라이스).
- */
-const COLLECT_TEXT = `
-((root) => {
-  const SKIP = new Set(['INPUT', 'TEXTAREA', 'SELECT', 'OPTION', 'SCRIPT', 'STYLE', 'NOSCRIPT', 'BUTTON', 'A']);
-  const lines = [];
+  if (!wantText) return { els: out, meta, texts: [] };
+  // 이름을 가져간 요소 — 그 안의 텍스트는 이미 요소 줄로 나왔으니 다시 내지 않는다.
+  // 태그(A·BUTTON)로 자르던 것을 실제로 이름이 붙은 요소로 바꾼 것이다: heading·label·clickable div는
+  // 태그로는 안 잡혀 제목과 라벨이 두 번씩 나왔다. 이름의 출처인 label도 같이 넣는다
+  const named = new Set();
+  for (let i = 0; i < out.length; i++) {
+    if (meta[i].name === '') continue;
+    named.add(out[i]);
+    const ls = out[i].labels;
+    if (ls) for (const l of ls) named.add(l);
+  }
+  // 본문 텍스트. input·textarea·select 내부의 텍스트 노드는 걷지 않는다 —
+  // textarea의 자식 텍스트 노드는 곧 그 값이다 (innerText를 쓰지 않는 이유).
+  // contenteditable 안의 텍스트도 같은 이유로 걷지 않는다 — 입력창 역할을 하는 요소의 내용이다 (규칙 1).
+  // root가 있으면 그 아래만 걷는다 (슬라이스).
+  const SKIP_TEXT = new Set(['INPUT', 'TEXTAREA', 'SELECT', 'OPTION', 'SCRIPT', 'STYLE', 'NOSCRIPT']);
+  const texts = [];
   const walker = document.createTreeWalker(root ?? document.body ?? document.documentElement, NodeFilter.SHOW_TEXT);
-  while (walker.nextNode() && lines.length < 120) {
+  while (walker.nextNode() && texts.length < 120) {
     const node = walker.currentNode;
-    let p = node.parentElement;
+    const p = node.parentElement;
+    if (!p) continue;
     let skip = false;
     for (let el = p; el; el = el.parentElement) {
-      if (SKIP.has(el.tagName) || el.isContentEditable) { skip = true; break; }
+      if (SKIP_TEXT.has(el.tagName) || el.isContentEditable || named.has(el)) { skip = true; break; }
     }
-    if (skip || !p) continue;
+    if (skip) continue;
     const s = getComputedStyle(p);
     if (s.display === 'none' || s.visibility === 'hidden') continue;
     const text = node.textContent.replace(/\\s+/g, ' ').trim();
-    if (text.length >= 2) lines.push({ t: text.slice(0, 120), footer: !!p.closest('footer,[role="contentinfo"],#footer,.footer') });
+    if (text.length >= 2) texts.push({ t: text.slice(0, 120), footer: !!p.closest('footer,[role="contentinfo"],#footer,.footer') });
   }
-  return lines;
+  return { els: out, meta, texts };
 })
 `;
 
-// 문자열 그대로 evaluate 하면 결과(함수)가 직렬화되지 않아 undefined가 온다 — 런타임 함수로 감싸 root 인자를 넘긴다.
+// 문자열 그대로 evaluate 하면 결과(함수)가 직렬화되지 않아 undefined가 온다 — 런타임 함수로 감싸 인자를 넘긴다.
 // 페이지 안에서 도는 본문은 위 문자열 그대로다 (규칙 1의 방어 지점은 바뀌지 않는다)
-type PageFn = (root: unknown) => unknown;
-const collectElements = new Function('root', `return (${COLLECT_ELEMENTS})(root)`) as PageFn;
-const collectText = new Function('root', `return (${COLLECT_TEXT})(root)`) as PageFn;
+type PageFn = (arg: unknown) => unknown;
+const collect = new Function('arg', `return (${COLLECT})(arg.root, arg.wantText)`) as PageFn;
 
 function originOfFrame(frame: Frame): string {
   try {
@@ -238,7 +254,8 @@ async function renderFrame(frame: Frame, refs: RefTable, depth: number, lines: L
   const isRootFrame = scope.rootFrame === frame;
   const root = isRootFrame ? scope.root : null;
 
-  const collected = await frame.evaluateHandle(collectElements, root as unknown);
+  const collected = await frame.evaluateHandle(collect, { root, wantText: emit && !scope.interactiveOnly } as unknown);
+  const texts = (await (await collected.getProperty('texts')).jsonValue()) as ReadonlyArray<{ t: string; footer: boolean }>;
   const meta = (await (await collected.getProperty('meta')).jsonValue()) as ReadonlyArray<{
     role: string;
     name: string;
@@ -266,10 +283,7 @@ async function renderFrame(frame: Frame, refs: RefTable, depth: number, lines: L
     lines.push({ kind: 'el', depth, role: m.role, name: m.name, checked: m.checked, href: m.href, ref, footer: m.footer, inAction: m.inAction });
   }
 
-  if (emit && !scope.interactiveOnly) {
-    const texts = (await frame.evaluate(collectText, root as unknown)) as ReadonlyArray<{ t: string; footer: boolean }>;
-    for (const { t, footer } of texts) lines.push({ kind: 'text', depth, text: t, footer });
-  }
+  for (const { t, footer } of texts) lines.push({ kind: 'text', depth, text: t, footer });
 
   for (const child of frame.childFrames()) {
     let label = '';
@@ -290,19 +304,21 @@ async function renderFrame(frame: Frame, refs: RefTable, depth: number, lines: L
   }
 }
 
-/** 가격처럼 보이는 본문 — lean에서도 남긴다 (상품 가격·최소주문금액이 여기 있다) */
-const PRICE_LIKE = /\d[\d,]*\s*원/;
 /** 같은 role·빈 이름이 이만큼 이어지면 한 줄로 접는다 (보안 키패드 모양). ref는 전부 유효하다 */
 const FOLD_MIN = 3;
 
 /**
- * lean (FWL-044, 기본): 액션도 정보도 없는 줄을 뺀다. 수집·번호는 건드리지 않으므로 남는 줄의 ref는 raw와 같다.
+ * lean (FWL-044, 기본. FWL-059 개정): **증명 가능하게 중복이거나 장식인 줄만** 뺀다.
+ * 수집·번호는 건드리지 않으므로 남는 줄의 ref는 raw와 같다.
  *  - 이름 없는 img, 앞뒤 요소와 같은 이름의 img (썸네일 alt = 링크 이름), 링크·버튼 안의 img (카드 배지)
  *  - footer / contentinfo 영역의 요소와 텍스트 (헤더는 그대로 — 로그인 표식)
- *  - 본문 텍스트 — 가격처럼 보이는 줄만 남기고, text: true면 전부
+ * 본문 텍스트는 남긴다. 예전엔 가격처럼 보이는 줄만 남겼는데, 그건 뭐가 중요한지 **추측**한 규칙이었고
+ * 클릭 결과·검증 오류·품절 표시가 그 추측에 걸려 사라졌다. 에이전트는 자기가 못 보고 있는 것을
+ * 달라고 요청할 수 없어서 opt-in 플래그로는 구제되지 않는다.
+ * 이미 어떤 요소의 이름으로 나온 텍스트는 애초에 수집되지 않는다 (COLLECT 안의 named).
  * raw: true면 아무것도 빼지 않는다
  */
-function leanLines(all: ReadonlyArray<Line>, opts: { readonly text: boolean }): Line[] {
+function leanLines(all: ReadonlyArray<Line>): Line[] {
   const els = all.filter((l): l is ElLine => l.kind === 'el');
   const sameNameNeighbour = (l: ElLine): boolean => {
     const i = els.indexOf(l);
@@ -313,7 +329,7 @@ function leanLines(all: ReadonlyArray<Line>, opts: { readonly text: boolean }): 
   return all.filter((l) => {
     if (l.kind === 'iframe') return true;
     if (l.footer) return false;
-    if (l.kind === 'text') return opts.text || PRICE_LIKE.test(l.text);
+    if (l.kind === 'text') return true;
     if (l.role === 'img' && (l.name === '' || l.inAction || sameNameNeighbour(l))) return false;
     return true;
   });
@@ -369,6 +385,6 @@ export async function buildSnapshot(
   const scope: Scope = { root: opts.root?.handle ?? null, rootFrame, interactiveOnly: opts.filter === 'interactive' };
   await renderFrame(page.mainFrame(), refs, 0, lines, scope, true);
   const raw = opts.raw === true;
-  const chosen = raw ? lines : leanLines(lines, { text: opts.text === true });
+  const chosen = raw ? lines : leanLines(lines);
   return serialize({ gen, pages, url: page.url(), tree: formatLines(chosen, !raw) });
 }
