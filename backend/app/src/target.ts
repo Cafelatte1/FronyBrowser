@@ -199,6 +199,8 @@ export function createPlaywrightTarget(pool: BrowserPool, opts: PlaywrightTarget
      */
     async image(sessionId): Promise<PageImage> {
       const s = state(sessionId);
+      // 방금 열린 새 탭이면 DOM이 준비될 때까지 기다린다 — snapshot과 같은 이유다. 없으면 about:blank를 찍는다
+      await s.page.waitForLoadState('domcontentloaded', { timeout: 10_000 }).catch(() => {});
       const mask = s.page.frames().map((f) => f.locator(FIELD_SELECTOR));
       let masked = 0;
       for (const m of mask) masked += await m.count().catch(() => 0);
