@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { scrubDeep, toScrubEntry } from '@wallet/core';
 
-const card = toScrubEntry('card.number', '1111222233334444', 'card');
+const card = toScrubEntry('card.personal.number', '1111222233334444', 'card');
 const phone = toScrubEntry('phone', '01012345678', 'phone');
 
 describe('scrubDeep', () => {
@@ -14,8 +14,8 @@ describe('scrubDeep', () => {
       { text: '카드 1111-2222-3333-4444 로 결제, 연락처 010-1234-5678' },
       [card, phone],
     );
-    expect(value.text).toBe('카드 [REDACTED:card.number] 로 결제, 연락처 [REDACTED:phone]');
-    expect(hits).toContainEqual({ key: 'card.number', count: 1 });
+    expect(value.text).toBe('카드 [REDACTED:card.personal.number] 로 결제, 연락처 [REDACTED:phone]');
+    expect(hits).toContainEqual({ key: 'card.personal.number', count: 1 });
     expect(hits).toContainEqual({ key: 'phone', count: 1 });
   });
 
@@ -33,13 +33,13 @@ describe('scrubDeep', () => {
 
   it('긴 패턴 우선 — 뒤 4자리가 전체 카드번호 매칭을 가리지 않는다', () => {
     const { value, hits } = scrubDeep({ t: '카드번호 1111222233334444 끝' }, [card]);
-    expect(value.t).toBe('카드번호 [REDACTED:card.number] 끝');
-    expect(hits).toEqual([{ key: 'card.number', count: 1 }]);
+    expect(value.t).toBe('카드번호 [REDACTED:card.personal.number] 끝');
+    expect(hits).toEqual([{ key: 'card.personal.number', count: 1 }]);
   });
 
   it('부분 마스킹 표기도 잡는다', () => {
     const { value } = scrubDeep({ t: '등록된 카드: ****-****-****-4444' }, [card]);
-    expect(value.t).toBe('등록된 카드: [REDACTED:card.number]');
+    expect(value.t).toBe('등록된 카드: [REDACTED:card.personal.number]');
   });
 
   it('히트 0이 정상 — 무관한 페이로드는 그대로 통과한다', () => {

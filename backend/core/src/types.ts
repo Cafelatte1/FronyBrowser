@@ -99,6 +99,10 @@ export const ERROR_CODES = {
   bad_request: { retriable: false },
   vault_locked: { retriable: false },
   key_not_found: { retriable: false },
+  /** 만들려는 것이 이미 있다 (FWL-056) — 금고 파일이 있는 채로 create를 부른 경우 */
+  already_exists: { retriable: false },
+  /** 운영자가 Test Mode 주행에서 이 키를 보류했다 (FWL-056). 아무것도 입력하지 않았다 — 빈 칸을 제출하지 말고 멈춘다 */
+  key_held: { retriable: false },
   origin_not_permitted: { retriable: false },
   grant_required: { retriable: false },
   grant_invalid: { retriable: false },

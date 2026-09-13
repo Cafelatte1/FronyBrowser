@@ -25,7 +25,7 @@ export type McpDeps = {
 
 export const INSTRUCTIONS = `FronyBrowser is a secure browser. It fills personal data (card numbers, login passwords, payment PINs) from a server-side vault by key name: you send "{{vault:key}}" placeholders and never see, receive, or need the value.
 
-Responses: every tool returns JSON, either { "ok": true, ... } or { "ok": false, "error": { "code", "message", "retriable" } }. "retriable": true (stale_ref, element_not_actionable, session_limit, lease_conflict, navigation_failed, timeout) means the same call may succeed later; after stale_ref take a new snapshot first. These codes need a human and must not be retried — report the code to the user and stop: vault_locked (the operator runs "wallet unlock"), keypad_unresolved (the secure keypad's markup changed), grant_required / grant_invalid (the pay grant is missing, expired, already used, or for another session).
+Responses: every tool returns JSON, either { "ok": true, ... } or { "ok": false, "error": { "code", "message", "retriable" } }. "retriable": true (stale_ref, element_not_actionable, session_limit, lease_conflict, navigation_failed, timeout) means the same call may succeed later; after stale_ref take a new snapshot first. These codes need a human and must not be retried — report the code to the user and stop: vault_locked (the operator runs "wallet unlock"), keypad_unresolved (the secure keypad's markup changed), grant_required / grant_invalid (the pay grant is missing, expired, already used, or for another session), key_held (the operator held this key back from test runs).
 
 Values never come back: snapshots omit input values, fill responses carry only the key name and length, and any vault value a page echoes is replaced by [REDACTED:key].
 
@@ -195,17 +195,8 @@ export function buildMcpServer(deps: McpDeps, caller: Caller): McpServer {
 
   server.registerTool(
     'vault_list',
-    { description: 'Names and types of the keys registered in the vault. Values are never returned.', inputSchema: {} },
+    { description: 'Names, types and labels of the keys registered in the vault, each with a grant flag saying whether fill needs a pay grant for it. Values and their lengths are never returned.', inputSchema: {} },
     async () => out('vault_list', await deps.handlers.vault_list(caller)),
-  );
-
-  server.registerTool(
-    'approval_wait',
-    {
-      description: 'Reserved for the approval channel. In this version it always returns approval_expired immediately; do not call it.',
-      inputSchema: { token: z.string(), timeoutMs: z.number().optional() },
-    },
-    async () => out('approval_wait', await deps.handlers.approval_wait()),
   );
 
   return server;

@@ -14,11 +14,12 @@ The placeholder is resolved inside this process and typed into the page over CDP
 value never appears in a tool result, a snapshot, a log, or an error message — every
 response leaves through one scrubbing exit, snapshots never carry input values, and the
 tool surface is a whitelist (no script execution, no HTML dump). Why each of those holds
-is written up in [docs/architecture.md](docs/architecture.md).
+is in CLAUDE.md, "Absolute rules".
 
 What it is not: a shopping assistant. It does not decide what to buy or whether a price
-is right; it only checks that what the caller declared (`expect`, a pay grant from
-[FronyShopping](docs/pay-grant.md)) matches what the page shows.
+is right. The one thing it checks on the value side is that a key registered with the
+`grant` flag is filled only with a valid pay grant from the calling service
+([docs/pay-grant.md](docs/pay-grant.md)).
 
 ## Quick start
 
@@ -35,14 +36,14 @@ Run the server on your own machine, loopback only, with no authentication servic
 (local mode, see [docs/operations.md](docs/operations.md#local-mode)):
 
 ```powershell
-Copy-Item config\policy.example.toml "$env:LOCALAPPDATA\Frony\FronyBrowser\data\policy.toml"
 $env:WALLET_LOCAL = "1"
 npm run -w backend/api dev
 ```
 
 For a server other devices reach, run the normal mode: it verifies every bearer token
 through a FronyAuth introspection endpoint (`FRONY_SERVICE_KEY`, `FRONY_AUTH_URL`,
-`FRONY_AUTH_ISSUER`; the contract is in [docs/auth.md](docs/auth.md)).
+`FRONY_AUTH_ISSUER`). This service stores no credential of its own; FronyAuth issues,
+verifies and revokes every key, and owns that contract.
 
 Register it in an MCP client with a device key issued by FronyAuth:
 
@@ -58,20 +59,22 @@ npm run wallet -- set card.personal.number --type card
 npm run wallet -- unlock
 ```
 
-The key policy (which origins may receive which key, which keys need a pay grant) lives on the
-server (`policy.toml` under the data dir, copied from `config/policy.example.toml`); the schema is
-in [docs/data-model.md](docs/data-model.md).
+There is no per-site configuration on this server. A key name is `group.subject.field`, and the
+only rule attached to a key is the `grant` flag you tick in the GUI. Which browser to use, keypad
+selectors and amount checks all arrive per call from the calling service.
 
 ## Tools
 
 - Session: `session_begin`, `session_list`, `session_status`, `session_end`
 - Page: `snapshot`, `navigate`, `fill`, `click`, `select`, `wait`, `page_switch`
-- Vault: `vault_list` (names and types only)
-- Approval: `approval_wait`
+- Vault: `vault_list` (names, types, labels and the grant flag — never values or their lengths)
 
-Details, the whitelist rule and how to add one: [docs/tool-surface.md](docs/tool-surface.md).
+The folder `backend/api/src/handlers/` is the whitelist: a capability that has no handler there does
+not exist. Read it before adding one.
 
 ## Docs
 
-`docs/INDEX.md` lists every doc with when to read it. Deployment on a home server is
-in [docs/operations.md](docs/operations.md).
+`docs/` holds only what the code cannot answer: [operations.md](docs/operations.md) (deploying and
+running the home server) and [pay-grant.md](docs/pay-grant.md) (the token contract the issuing
+service must match). For anything about this codebase, read the code. Authentication lives in
+FronyAuth, which owns both the implementation and its documentation.

@@ -139,7 +139,8 @@ export type ApprovalWaitResponse =
 
 /** 키 이름과 타입만. 값은 어떤 경우에도 나가지 않는다 */
 export type VaultListResponse = {
-  readonly keys: ReadonlyArray<{ readonly name: string; readonly type: string }>;
+  /** grant는 이 키를 채우려면 pay grant가 필요하다는 뜻, label은 운영자가 붙인 이름이다. 둘 다 값이 아니다 */
+  readonly keys: ReadonlyArray<{ readonly name: string; readonly type: string; readonly grant: boolean; readonly label: string }>;
 };
 
 /** admin 클라이언트만 호출할 수 있다. MCP 도구로 노출하지 않는다 (8.4) */

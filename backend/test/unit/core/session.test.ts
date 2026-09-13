@@ -39,7 +39,7 @@ describe('session store', () => {
     const s = store();
     expect(s.begin('a', SHOP, HL).ok).toBe(true);
     expect(s.begin('b', SHOP, HL)).toEqual({ ok: false, code: 'lease_conflict' });
-    expect(s.begin('b', OTHER, { browser: 'chrome', headless: false }).ok).toBe(true);
+    expect(s.begin('b', OTHER, { kind: 'browser' as const, browser: 'chrome', headless: false }).ok).toBe(true);
   });
 
   it('같은 클라이언트가 쥔 origin은 이어받는다 — 이전 세션은 사라지고 replaced로 돌아온다 (FWL-036)', () => {

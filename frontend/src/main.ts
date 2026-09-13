@@ -1,40 +1,69 @@
 /**
- * 금고 등록 페이지 (2-pane 콘솔). backend 코드를 import하지 않는다 — HTTP API로만 통신
+ * 금고 콘솔 (레일 + 내용). backend 코드를 import하지 않는다 — HTTP API로만 통신
  * (금고 코드가 클라이언트 번들에 딸려 나가는 경로 차단).
  *
  * 값은 보내기만 하고 되돌아오지 않는다. 등록 여부는 /vault/list의
- * 이름·타입·길이로만 판정한다. 저장은 지금 보고 있는 그룹 단위다 (FWL-054).
+ * 이름·타입·길이·라벨로만 판정한다. 저장은 지금 보고 있는 그룹 단위고,
+ * 마스터 비밀번호는 저장·열기·연장 대화상자에서만 받는다 (FWL-056).
  */
 
-import { EXTRA_KEY, SCHEMA_KEYS, SECTIONS, checkFields, groupOf, isSecretKey, type FieldDef, type KeyInfo } from './schema.js';
+import { CUSTOM_BLURB, EXTRA_KEY, SCHEMA_KEYS, SECTIONS, checkFields, groupOf, isSecretKey, type FieldDef, type KeyInfo } from './schema.js';
 import { fmtRemain } from './format.js';
 
-type Row = { key: string; type: string; grant: boolean; input: HTMLInputElement; field?: FieldDef; label: string };
-/** 그룹 id → 그 그룹의 입력칸. 내장 그룹은 SECTIONS.id, 기타 키는 이름의 첫 세그먼트 */
-const groups = new Map<string, Row[]>();
-let current = SECTIONS[0]!.id;
+/** 화면 한 줄 — 스키마 항목이거나, 금고에 있는 기타 키거나, 아직 저장 안 한 추가 줄이다 */
+type Row = {
+  key: string; type: string; label: string; grant: boolean;
+  registered: boolean; secret: boolean; field?: FieldDef;
+};
+type VaultState = 'open' | 'locked' | 'missing' | 'offline';
+type Dlg = 'confirm' | 'unlock' | 'extend' | 'group' | 'testOn' | 'testOff' | 'wipe' | 'grantOff';
+
 let existing = new Map<string, KeyInfo>();
-let ttlMax = 0; // 진행바 분모 — 이 세션에서 본 가장 긴 남은 시간
+let current = SECTIONS[0]!.id;
+let vault: VaultState = 'offline';
+let ttlMs = 0;
+let ttlMaxMs: number | null = null;
+let testOn = false;
+/** Test Mode에서 빼 둘 키 — 서버가 전체 목록을 들고 있다 */
+const held = new Set<string>();
+/** 저장 전까지만 존재하는 줄 — 그룹 id → 줄들 */
+const pendingRows = new Map<string, Array<{ key: string; type: string; label: string }>>();
+/** 사용자가 만들었지만 아직 키가 하나도 없는 그룹 */
+const newGroups = new Set<string>();
+/** 입력칸 값 — 다시 그려도 살아남게 여기 둔다 */
+const draft = new Map<string, string>();
+/** 아직 등록되지 않은 키의 grant 체크 상태 (저장 때 같이 나간다) */
+const grantDraft = new Map<string, boolean>();
+let dlg: Dlg | null = null;
+/** grantOff 대화상자가 묻고 있는 줄 — 확인을 누르면 이 줄의 플래그를 끈다 */
+let grantOffRow: Row | null = null;
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
-const passphrase = (): string => $<HTMLInputElement>('pass').value;
 const token = (): string | null => sessionStorage.getItem('wallet-wsess');
-const LOCK_SVG = '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4.5" y="9" width="11" height="7.5" rx="1.8"/><path d="M7.4 9V7A2.6 2.6 0 0 1 12.6 7v2" stroke-linecap="round"/></svg>';
+const CHECK_SVG = '<span class="box"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 10.4 8.3 13.7 15 7"/></svg></span>';
+
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
 
 function show(id: 'view-login' | 'view-main'): void {
   $('view-login').hidden = id !== 'view-login';
   $('view-main').hidden = id !== 'view-main';
+  if (id === 'view-login') closeDialog();
 }
 
-// 하단 저장 바 위의 피드백 줄 — 성공 4초, 실패 10초 뒤 사라진다
+// 오른쪽 아래 토스트 — 성공 4초, 실패 10초 뒤 사라진다
 let msgTimer: ReturnType<typeof setTimeout> | undefined;
 function note(ok: boolean, text: string): void {
-  const m = $('msg');
-  m.hidden = false;
-  m.className = `feedback ${ok ? 'ok' : 'err'}`;
-  m.textContent = text;
+  const b = $('banner');
+  b.hidden = false;
+  b.className = `banner ${ok ? 'ok' : 'err'}`;
+  $('banner-text').textContent = text;
   clearTimeout(msgTimer);
-  msgTimer = setTimeout(() => { m.hidden = true; }, ok ? 4_000 : 10_000);
+  msgTimer = setTimeout(() => { b.hidden = true; }, ok ? 4_000 : 10_000);
 }
 
 async function api(path: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -67,7 +96,7 @@ $('login-form').addEventListener('submit', (e) => {
       }),
     });
     const json = (await res.json().catch(() => null)) as {
-      ok?: boolean; token?: string; attemptsLeft?: number; retryAfterSeconds?: number;
+      ok?: boolean; token?: string; retryAfterSeconds?: number;
     } | null;
     const msg = $('login-msg');
     if (res.ok && json?.ok && json.token) {
@@ -75,16 +104,13 @@ $('login-form').addEventListener('submit', (e) => {
       $<HTMLInputElement>('login-pass').value = '';
       msg.hidden = true;
       show('view-main');
-      void refreshHealth();
-      void refreshDryRun();
+      void reload();
       return;
     }
     msg.hidden = false;
-    msg.textContent = res.status === 429
+    $('login-msg-text').textContent = res.status === 429
       ? `Locked out — try again in ${json?.retryAfterSeconds ?? '?'} s.`
-      : json?.attemptsLeft !== undefined
-        ? `Sign-in failed — ${json.attemptsLeft} attempts left before this account is locked.`
-        : 'Sign-in failed.';
+      : 'Sign-in failed. Check the username and password.';
   })();
 });
 
@@ -93,99 +119,173 @@ $('btn-logout').addEventListener('click', () => {
   show('view-login');
 });
 
-// ── 금고 상태 (레일) ─────────────────────────────────────────
+// ── 서버 상태 ────────────────────────────────────────────────
 
 async function refreshHealth(): Promise<void> {
-  const cards = ['vault-open', 'vault-locked', 'vault-missing', 'vault-offline'];
-  let visible = 'vault-offline';
   try {
     const r = (await (await fetch('/health')).json()) as {
-      vaultLocked?: boolean; vaultExists?: boolean; vaultTtlMs?: number;
+      vaultLocked?: boolean; vaultExists?: boolean; vaultTtlMs?: number; vaultTtlMaxMs?: number | null;
     };
-    // unlock은 CLI(wallet unlock) 또는 레일의 버튼 — 같은 /vault/unlock이다
-    if (r.vaultExists === false) visible = 'vault-missing';
-    else if (r.vaultLocked) visible = 'vault-locked';
-    else {
-      visible = 'vault-open';
-      const ms = r.vaultTtlMs ?? 0;
-      ttlMax = Math.max(ttlMax, ms);
-      $('vault-remain').textContent = fmtRemain(ms);
-      $('vault-bar').style.width = `${ttlMax > 0 ? Math.round((ms / ttlMax) * 100) : 0}%`;
-    }
+    vault = r.vaultExists === false ? 'missing' : r.vaultLocked ? 'locked' : 'open';
+    ttlMs = r.vaultTtlMs ?? 0;
+    ttlMaxMs = typeof r.vaultTtlMaxMs === 'number' ? r.vaultTtlMaxMs : null;
   } catch {
-    /* offline card */
+    vault = 'offline';
   }
-  for (const id of cards) $(id).hidden = id !== visible;
 }
 
-// 레일 버튼 = 목록 조회 + 서버 금고 unlock. 패스프레이즈는 하단 바 하나에서 읽는다 — 비어 있으면 거기로 보낸다.
-// 목록이 먼저다 — 패스프레이즈가 틀리면 거기서 끝나고 unlock 시도는 없다
-for (const btn of document.querySelectorAll<HTMLButtonElement>('.btn-unlock')) {
-  btn.addEventListener('click', () => {
-    if (!passphrase()) { $('pass').focus(); return note(false, 'Enter the master password in the bar below first.'); }
-    void (async () => {
-      await refreshList();
-      const r = await api('/vault/unlock', { passphrase: passphrase() });
-      await refreshHealth();
-      note(true, `Vault open for ${fmtRemain(Number(r['ttlMs'] ?? 0))}. Status refreshed.`);
-    })().catch((e: Error) => note(false, `Could not open the vault: ${e.message}`));
-  });
-}
-
-// ── dry-run 토글 ─────────────────────────────────────────────
-// 켜져 있으면 결제 비밀번호(grant 플래그 키) fill이 grant 검증까지만 하고 입력하지 않는다.
-// 실결제 없이 E2E를 돌리는 스위치 — 켜진 채 두면 실주행이 조용히 결제 없이 끝나므로 레일에 크게 띄운다
-
-function renderDryRun(on: boolean): void {
-  $('dry-on').hidden = !on;
-  $('dry-off').hidden = on;
-}
-
-async function refreshDryRun(): Promise<void> {
+async function refreshTestMode(): Promise<void> {
   try {
-    const res = await fetch('/admin/dry-run', { headers: { authorization: `Bearer ${token() ?? ''}` } });
-    const r = (await res.json().catch(() => null)) as { ok?: boolean; on?: boolean } | null;
-    if (res.ok && r?.ok) renderDryRun(r.on === true);
+    const res = await fetch('/admin/test-mode', { headers: { authorization: `Bearer ${token() ?? ''}` } });
+    const r = (await res.json().catch(() => null)) as { ok?: boolean; on?: boolean; held?: string[] } | null;
+    if (!res.ok || !r?.ok) return;
+    testOn = r.on === true;
+    held.clear();
+    for (const k of r.held ?? []) held.add(k);
   } catch {
-    /* 레일 상태일 뿐이다 — 다음 폴링에서 다시 */
+    /* 다음 폴링에서 다시 */
   }
 }
 
-async function setDryRun(on: boolean): Promise<void> {
-  if (on && !confirm('DRY RUN skips typing payment PINs — turn it off before the next live run. Turn it on?')) return;
-  try {
-    const r = (await api('/admin/dry-run', { on })) as { on?: boolean };
-    renderDryRun(r.on === true);
-    note(true, r.on ? 'DRY RUN on — payment PINs are not typed.' : 'DRY RUN off — payments are live.');
-  } catch (e) {
-    note(false, `Could not change dry-run: ${(e as Error).message}`);
+async function refreshList(): Promise<void> {
+  const r = (await api('/vault/list', {})) as unknown as { keys: KeyInfo[] };
+  existing = new Map(r.keys.map((k) => [k.name, k]));
+}
+
+/** 서버 상태 + 키 목록을 다시 읽고 화면을 그린다 */
+async function reload(): Promise<void> {
+  await refreshHealth();
+  await refreshTestMode();
+  if (vault === 'open') await refreshList().catch(() => { existing = new Map(); });
+  else existing = new Map();
+  render();
+}
+
+/** 설정된 unlock 시간 — 대화상자 문구에 실제 값을 쓴다. 알 수 없으면 null */
+function ttlSpan(): string | null {
+  return ttlMaxMs !== null && ttlMaxMs > 0 ? fmtRemain(ttlMaxMs) : null;
+}
+
+// ── 그룹과 줄 ────────────────────────────────────────────────
+
+function sectionOf(id: string): { title: string; blurb: string; fields: FieldDef[] } | undefined {
+  return SECTIONS.find((s) => s.id === id);
+}
+
+function titleOf(id: string): string {
+  return sectionOf(id)?.title ?? id;
+}
+
+function rowsOf(id: string): Row[] {
+  const section = sectionOf(id);
+  if (section) {
+    return section.fields.map((f) => {
+      const info = existing.get(f.key);
+      return {
+        key: f.key, type: f.type, label: f.label, field: f, secret: f.secret === true,
+        registered: info !== undefined,
+        grant: info ? info.grant : grantDraft.get(f.key) ?? f.grant === true,
+      };
+    });
   }
+  const rows: Row[] = [...existing.values()]
+    .filter((k) => !SCHEMA_KEYS.has(k.name) && groupOf(k.name) === id)
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((k) => ({
+      key: k.name, type: k.type, label: k.label !== '' ? k.label : k.name,
+      grant: k.grant, registered: true, secret: isSecretKey(k.name),
+    }));
+  for (const p of pendingRows.get(id) ?? []) {
+    rows.push({
+      key: p.key, type: p.type, label: p.label, registered: false,
+      secret: isSecretKey(p.key), grant: grantDraft.get(p.key) === true,
+    });
+  }
+  return rows;
 }
-$('btn-dry-on').addEventListener('click', () => { void setDryRun(true); });
-$('btn-dry-off').addEventListener('click', () => { void setDryRun(false); });
 
-// ── 그룹 내비 + 패널 ─────────────────────────────────────────
-
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, text?: string): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  if (text !== undefined) e.textContent = text;
-  return e;
+/** 스키마 밖 그룹 — 금고에 있는 키, 만들어만 둔 그룹, 저장 전 줄을 모두 모은다 */
+function customGroups(): string[] {
+  const set = new Set<string>(newGroups);
+  for (const k of existing.keys()) if (!SCHEMA_KEYS.has(k)) set.add(groupOf(k));
+  for (const g of pendingRows.keys()) set.add(g);
+  return [...set].sort((a, b) => a.localeCompare(b));
 }
 
-function badge(info: KeyInfo | undefined): HTMLElement {
-  return el('span', `badge ${info ? 'filled' : 'empty'}`, info ? `Registered · ${info.len}` : 'Not set');
+function valueOf(key: string): string {
+  return (draft.get(key) ?? '').trim();
 }
 
-function delButton(key: string, label: string): HTMLButtonElement {
+function enteredRows(): Row[] {
+  return rowsOf(current).filter((r) => valueOf(r.key) !== '');
+}
+
+// ── 그리기 ───────────────────────────────────────────────────
+
+function render(): void {
+  renderRail();
+  renderNav();
+  renderContent();
+}
+
+function renderRail(): void {
+  $('vault-open').hidden = vault !== 'open';
+  $('vault-locked').hidden = vault !== 'locked';
+  $('vault-missing').hidden = vault !== 'missing';
+  $('vault-offline').hidden = vault !== 'offline';
+  $('vault-remain').textContent = fmtRemain(ttlMs);
+  // 분모를 모르면 진행바는 숨긴다 — 눈금 없는 막대는 거짓말이다
+  $('vault-bar-track').hidden = ttlMaxMs === null;
+  if (ttlMaxMs !== null && ttlMaxMs > 0) {
+    $('vault-bar').style.width = `${Math.round(Math.min(1, ttlMs / ttlMaxMs) * 100)}%`;
+  }
+  $('btn-test').dataset['test'] = testOn ? 'on' : 'off';
+  $('test-note').hidden = !testOn;
+}
+
+function navItem(id: string, label: string, count?: string): HTMLElement {
+  const item = el('div', 'nav-item');
+  item.dataset['group'] = id;
+  if (id === current) item.classList.add('on');
+  item.append(el('span', 'nav-label', label));
+  if (count !== undefined) item.append(el('span', 'nav-count', count));
+  item.addEventListener('click', () => { select(id); });
+  return item;
+}
+
+function renderNav(): void {
+  const nav = $('nav');
+  nav.querySelectorAll('.nav-item, .nav-sep').forEach((n) => { n.remove(); });
+  const count = (id: string): string => {
+    const rows = rowsOf(id);
+    return `${rows.filter((r) => r.registered).length}/${rows.length}`;
+  };
+  for (const s of SECTIONS) nav.append(navItem(s.id, s.title, count(s.id)));
+  const custom = customGroups();
+  if (custom.length > 0) nav.append(el('div', 'nav-sep'));
+  for (const g of custom) nav.append(navItem(g, g, count(g)));
+
+  const add = el('div', 'nav-item add');
+  add.dataset['group'] = 'new-group';
+  add.insertAdjacentHTML('beforeend', '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 4.5v11M4.5 10h11" stroke-linecap="round"/></svg>');
+  add.append(el('span', 'nav-label', 'New key group'));
+  add.addEventListener('click', () => { openDialog('group'); });
+  nav.append(add);
+}
+
+function isPending(r: Row): boolean {
+  return (pendingRows.get(current) ?? []).some((p) => p.key === r.key);
+}
+
+function delButton(r: Row): HTMLButtonElement {
   const del = el('button', 'row-del', 'Delete');
   del.addEventListener('click', () => {
     void (async () => {
-      if (!confirm(`Delete the stored value of ${label}?`)) return;
+      if (!confirm(`Delete the stored value of ${r.label}?`)) return;
       try {
-        await api('/vault/rm', { passphrase: passphrase(), key });
-        note(true, `Deleted ${label}. Status refreshed.`);
-        await refreshList();
+        await api('/vault/rm', { key: r.key });
+        note(true, `Deleted ${r.label}. Status refreshed.`);
+        await reload();
       } catch (e) {
         note(false, `Delete failed: ${(e as Error).message}`);
       }
@@ -194,189 +294,444 @@ function delButton(key: string, label: string): HTMLButtonElement {
   return del;
 }
 
-function fieldRow(field: FieldDef, info: KeyInfo | undefined): { row: HTMLElement; input: HTMLInputElement } {
+/** 저장 전 행은 서버에 없다 — 화면에서만 지운다 */
+function discardButton(r: Row): HTMLButtonElement {
+  const dis = el('button', 'row-del', 'Discard');
+  dis.addEventListener('click', () => {
+    const left = (pendingRows.get(current) ?? []).filter((p) => p.key !== r.key);
+    if (left.length > 0) pendingRows.set(current, left);
+    else pendingRows.delete(current);
+    render();
+  });
+  return dis;
+}
+
+function rowEl(r: Row): HTMLElement {
   const row = el('div', 'row');
-  row.dataset['key'] = field.key;
-  const head = el('div');
-  const label = el('div', 'label', field.label);
-  if (field.secret) label.insertAdjacentHTML('beforeend', LOCK_SVG);
-  head.append(label, el('div', 'key', `${field.key}${field.grant ? ' · grant' : ''}`));
+  row.dataset['key'] = r.key;
+  row.dataset['hold'] = held.has(r.key) ? 'on' : 'off';
+
+  const label = el('div', 'row-label');
+  label.title = 'Hold this key back from test runs';
+  label.append(el('div', undefined, r.label), el('div', 'row-key', r.key));
+  label.addEventListener('click', () => { void toggleHold(r.key); });
+
+  const grant = el('button', 'grant');
+  grant.dataset['grant'] = r.grant ? 'on' : 'off';
+  grant.title = 'Requires a grant before an agent may use this key';
+  grant.insertAdjacentHTML('beforeend', CHECK_SVG);
+  grant.addEventListener('click', () => { void toggleGrant(r); });
+
+  const badge = el('span', `badge ${r.registered ? 'filled' : 'empty'}`, r.registered ? 'Registered' : 'Not set');
+
   const input = el('input');
-  // 화면 마스킹은 CVV·카드 비번만 — 나머지는 사람이 확인하며 적도록 평문 표시
-  input.type = field.secret ? 'password' : 'text';
+  // 화면 마스킹은 CVV·카드 비번과 password·pin으로 끝나는 기타 키 — 나머지는 보며 적도록 평문
+  input.type = r.secret ? 'password' : 'text';
   input.autocomplete = 'off';
-  input.placeholder = field.hint ?? '';
-  row.append(head, badge(info), input, info ? delButton(field.key, field.label) : el('span'));
-  return { row, input };
+  input.placeholder = r.field?.hint ?? 'New value';
+  input.value = draft.get(r.key) ?? '';
+  input.addEventListener('input', () => {
+    draft.set(r.key, input.value);
+    updateEntered();
+  });
+
+  row.append(label, grant, badge, input, r.registered ? delButton(r) : isPending(r) ? discardButton(r) : el('span'));
+  return row;
 }
 
-function freeRow(k: KeyInfo): { row: HTMLElement; input: HTMLInputElement } {
-  const row = el('div', 'row free');
-  row.dataset['key'] = k.name;
-  const head = el('div');
-  head.append(el('div', 'label', k.name), el('div', 'key', `type ${k.type}${k.grant ? ' · grant' : ''}`));
-  const input = el('input');
-  input.type = isSecretKey(k.name) ? 'password' : 'text';
-  input.autocomplete = 'off';
-  input.placeholder = 'New value';
-  row.append(head, badge(k), input, delButton(k.name, k.name));
-  return { row, input };
+function renderContent(): void {
+  const section = sectionOf(current);
+  const title = $('pane-title');
+  title.textContent = titleOf(current);
+  title.classList.toggle('mono', section === undefined);
+  $('pane-blurb').textContent = section?.blurb ?? CUSTOM_BLURB;
+
+  $('save-controls').hidden = vault !== 'open';
+  $('lock-notice').hidden = vault === 'open';
+  $('pane-locked').hidden = vault !== 'locked';
+  $('pane-create').hidden = vault !== 'missing';
+  $('pane-rows').hidden = vault !== 'open';
+
+  const span = ttlSpan();
+  $('locked-blurb').textContent = span === null
+    ? 'Registering a key writes into the vault, so it has to be open. Enter the master password once and it stays open until it locks itself.'
+    : `Registering a key writes into the vault, so it has to be open. Enter the master password once and it stays open for ${span}.`;
+
+  const rows = $('rows');
+  rows.querySelectorAll('.row, .rows-empty').forEach((n) => { n.remove(); });
+  const list = rowsOf(current);
+  if (list.length === 0) rows.append(el('div', 'rows-empty', 'No keys in this group yet.'));
+  for (const r of list) rows.append(rowEl(r));
+
+  const unnamed = [...existing.values()].filter((k) => k.label === '').length;
+  $('unnamed').hidden = unnamed === 0;
+  $('unnamed-text').textContent = `${unnamed} ${unnamed === 1 ? 'key has' : 'keys have'} no name yet.`;
+
+  // 그룹 통째로 지우기는 스키마 밖 그룹에만 — 스키마 그룹은 줄마다 Delete로 지운다
+  $('btn-del-group').hidden = section !== undefined || vault !== 'open';
+  $('add-area').hidden = section !== undefined;
+  $('add-full').textContent = `${current}.${$<HTMLInputElement>('add-field').value.trim() || 'login.id'}`;
+
+  updateEntered();
 }
 
-function pane(id: string, title: string, blurb: string, mono = false): { pane: HTMLElement; body: HTMLElement } {
-  const p = el('div', 'pane');
-  p.dataset['group'] = id;
-  const head = el('header', 'pane-head');
-  const h = el('h1', mono ? 'display mono' : 'display', title);
-  head.append(h, el('p', 'caption muted', blurb));
-  const body = el('div', 'pane-body');
-  p.append(head, body);
-  return { pane: p, body };
-}
-
-function navItem(id: string, label: string, count?: string): HTMLElement {
-  const item = el('div', 'nav-item');
-  item.dataset['group'] = id;
-  item.append(el('span', 'nav-label', label));
-  if (count !== undefined) item.append(el('span', 'nav-count', count));
-  item.addEventListener('click', () => select(id));
-  return item;
-}
-
-function render(): void {
-  const nav = $('nav');
-  const panes = $('panes');
-  nav.querySelectorAll('.nav-item, .nav-sep').forEach((n) => n.remove());
-  panes.textContent = '';
-  groups.clear();
-
-  for (const s of SECTIONS) {
-    const filled = s.fields.filter((f) => existing.has(f.key)).length;
-    nav.append(navItem(s.id, s.title, `${filled}/${s.fields.length}`));
-    const { pane: p, body } = pane(s.id, s.title, s.blurb);
-    const rows: Row[] = [];
-    for (const f of s.fields) {
-      const { row, input } = fieldRow(f, existing.get(f.key));
-      body.append(row);
-      rows.push({ key: f.key, type: f.type, grant: f.grant === true, input, field: f, label: f.label });
-    }
-    groups.set(s.id, rows);
-    panes.append(p);
-  }
-
-  // 기타 키 — 이름의 첫 세그먼트로 묶어 레일 항목이 된다
-  const extras = new Map<string, KeyInfo[]>();
-  for (const k of existing.values()) {
-    if (SCHEMA_KEYS.has(k.name)) continue;
-    const g = groupOf(k.name);
-    extras.set(g, [...(extras.get(g) ?? []), k]);
-  }
-  if (extras.size > 0) nav.append(el('div', 'nav-sep'));
-  for (const [g, keys] of [...extras].sort(([a], [b]) => a.localeCompare(b))) {
-    nav.append(navItem(g, g, `${keys.length}/${keys.length}`));
-    const { pane: p, body } = pane(g, g, 'Keys you added yourself, grouped by the first part of their name. The type travels with the value in the vault, so it is shown here rather than guessed.', true);
-    const rows: Row[] = [];
-    for (const k of keys.sort((a, b) => a.name.localeCompare(b.name))) {
-      const { row, input } = freeRow(k);
-      body.append(row);
-      rows.push({ key: k.name, type: k.type, grant: k.grant, input, label: k.name });
-    }
-    const noteEl = el('div', 'note');
-    noteEl.insertAdjacentHTML('beforeend', '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="7"/><path d="M10 13.4V9.2M10 6.6h.01" stroke-linecap="round"/></svg>');
-    noteEl.append(el('span', undefined, 'A key marked grant is filled only when the calling service hands over a pay grant for the session. Everything else fills wherever the agent points it.'));
-    body.append(noteEl);
-    groups.set(g, rows);
-    panes.append(p);
-  }
-
-  const add = el('div', 'nav-item add');
-  add.dataset['group'] = 'add';
-  add.insertAdjacentHTML('beforeend', '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 4.5v11M4.5 10h11" stroke-linecap="round"/></svg>');
-  add.append(el('span', 'nav-label', 'Add a key'));
-  add.addEventListener('click', () => select('add'));
-  nav.append(add);
-
-  for (const rows of groups.values()) for (const r of rows) r.input.addEventListener('input', updateEntered);
-  select(groups.has(current) || current === 'add' ? current : SECTIONS[0]!.id);
+function updateEntered(): void {
+  const n = enteredRows().length;
+  $('entered').innerHTML = `<span class="mono text">${n}</span> ${n === 1 ? 'field' : 'fields'} entered`;
+  $('btn-save').dataset['save'] = n > 0 ? 'on' : 'off';
 }
 
 function select(id: string): void {
   current = id;
-  for (const n of document.querySelectorAll<HTMLElement>('.nav-item')) n.classList.toggle('on', n.dataset['group'] === id);
-  for (const p of document.querySelectorAll<HTMLElement>('#panes .pane')) p.hidden = p.dataset['group'] !== id;
-  $('pane-add').hidden = id !== 'add';
-  $('btn-save').textContent = id === 'add' ? 'Save this key' : 'Save this group';
-  updateEntered();
-}
-
-function entered(): Row[] {
-  return (groups.get(current) ?? []).filter((r) => r.input.value.trim().length > 0);
-}
-
-function updateEntered(): void {
-  const n = current === 'add' ? Number($<HTMLInputElement>('free-value').value.length > 0) : entered().length;
-  $('entered').innerHTML = `<span class="mono text">${n}</span> ${n === 1 ? 'field' : 'fields'} entered`;
-}
-$('free-value').addEventListener('input', updateEntered);
-
-async function refreshList(): Promise<void> {
-  const r = (await api('/vault/list', { passphrase: passphrase() })) as unknown as { keys: KeyInfo[] };
-  existing = new Map(r.keys.map((k) => [k.name, k]));
+  closeAddPanel();
   render();
 }
 
+// ── grant 토글 · 키 보류 ─────────────────────────────────────
+
+async function toggleGrant(r: Row): Promise<void> {
+  if (!r.registered) {
+    // 값이 아직 없는 줄은 표시만 바꾼다 — 플래그는 저장 때 같이 나간다
+    grantDraft.set(r.key, !r.grant);
+    render();
+    return;
+  }
+  // 끄는 쪽은 보호를 없애는 방향이라 한 번 묻는다. 켜는 쪽은 그대로 즉시 반영한다
+  if (r.grant) {
+    grantOffRow = r;
+    openDialog('grantOff');
+    return;
+  }
+  await applyGrant(r, true);
+}
+
+/** 먼저 뒤집어 그리고 서버에는 뒤이어 보낸다 — 클릭이 왕복을 기다리지 않는다. 실패하면 되돌린다 */
+async function applyGrant(r: Row, grant: boolean): Promise<void> {
+  const info = existing.get(r.key);
+  if (info === undefined) return;
+  existing.set(r.key, { ...info, grant });
+  render();
+  try {
+    const res = (await api('/vault/grant', { key: r.key, grant })) as { grant?: boolean };
+    note(true, res.grant === true
+      ? `${r.label} now needs a pay grant.`
+      : `${r.label} no longer needs a pay grant.`);
+  } catch (e) {
+    existing.set(r.key, info);
+    render();
+    note(false, `Could not change the grant flag: ${(e as Error).message}`);
+  }
+}
+
+async function toggleHold(key: string): Promise<void> {
+  const before = new Set(held);
+  if (held.has(key)) held.delete(key); else held.add(key);
+  render();
+  try {
+    await api('/admin/test-mode', { held: [...held] });
+  } catch (e) {
+    held.clear();
+    for (const k of before) held.add(k);
+    render();
+    note(false, `Could not change the held keys: ${(e as Error).message}`);
+  }
+}
+
+// ── 키 추가 (스키마 밖 그룹) ─────────────────────────────────
+
+function closeAddPanel(): void {
+  $('add-panel').hidden = true;
+  $('btn-add-open').hidden = false;
+  $<HTMLInputElement>('add-name').value = '';
+  $<HTMLInputElement>('add-field').value = '';
+  $<HTMLSelectElement>('add-type').value = 'text';
+}
+
+$('btn-add-open').addEventListener('click', () => {
+  $('add-panel').hidden = false;
+  $('btn-add-open').hidden = true;
+  $<HTMLInputElement>('add-name').focus();
+});
+$('btn-add-discard').addEventListener('click', () => {
+  closeAddPanel();
+  $('add-full').textContent = `${current}.login.id`;
+});
+$('add-field').addEventListener('input', () => {
+  $('add-full').textContent = `${current}.${$<HTMLInputElement>('add-field').value.trim() || 'login.id'}`;
+});
+
+$('btn-del-group').addEventListener('click', () => {
+  void (async () => {
+    const group = current;
+    const stored = [...existing.keys()].filter((k) => !SCHEMA_KEYS.has(k) && groupOf(k) === group);
+    const what = stored.length === 0
+      ? `Delete the group ${group}?`
+      : `Delete ${group} and the ${stored.length} ${stored.length === 1 ? 'value' : 'values'} stored under it? The values are gone for good.`;
+    if (!confirm(what)) return;
+    try {
+      // 키를 명시해 보낸다 — 다이얼로그가 센 목록과 실제로 지워지는 목록이 같아야 한다
+      if (stored.length > 0) await api('/vault/rm-keys', { keys: stored });
+      newGroups.delete(group);
+      pendingRows.delete(group);
+      for (const k of stored) draft.delete(k);
+      select(SECTIONS[0]!.id);
+      note(true, `Deleted ${group}.`);
+      await reload();
+    } catch (e) {
+      note(false, `Delete failed: ${(e as Error).message}`);
+    }
+  })();
+});
+
+$('btn-add-key').addEventListener('click', () => {
+  const label = $<HTMLInputElement>('add-name').value.trim();
+  const field = $<HTMLInputElement>('add-field').value.trim();
+  if (!label || !field) return note(false, 'Enter a display name and a key name.');
+  const key = `${current}.${field}`;
+  if (!EXTRA_KEY.test(key)) return note(false, `Key names are group.subject.field — this group is ${current}, so type the two parts after it (e.g. login.id).`);
+  if (existing.has(key) || (pendingRows.get(current) ?? []).some((p) => p.key === key)) {
+    return note(false, `${key} is already in this group.`);
+  }
+  pendingRows.set(current, [...(pendingRows.get(current) ?? []), { key, type: $<HTMLSelectElement>('add-type').value, label }]);
+  closeAddPanel();
+  render();
+  note(true, `Key ${key} added — it holds no value until you save one.`);
+});
+
+// ── 이름 없는 키 ─────────────────────────────────────────────
+
+$('btn-seed').addEventListener('click', () => {
+  void (async () => {
+    try {
+      const r = (await api('/vault/seed-labels', {})) as { seeded?: Array<{ key: string }> };
+      const n = r.seeded?.length ?? 0;
+      note(true, `Named ${n} ${n === 1 ? 'key' : 'keys'}. Status refreshed.`);
+      await reload();
+    } catch (e) {
+      note(false, `Could not name the keys: ${(e as Error).message}`);
+    }
+  })();
+});
+
+// ── 금고 만들기 (금고 없음 화면) ─────────────────────────────
+
+function setupState(): void {
+  const p = $<HTMLInputElement>('setup-pass').value;
+  const p2 = $<HTMLInputElement>('setup-pass2').value;
+  $('btn-setup').dataset['save'] = p.length >= 8 && p === p2 ? 'on' : 'off';
+}
+$('setup-pass').addEventListener('input', setupState);
+$('setup-pass2').addEventListener('input', setupState);
+
+$('btn-setup').addEventListener('click', () => {
+  const msg = $('setup-msg');
+  const p = $<HTMLInputElement>('setup-pass').value;
+  const p2 = $<HTMLInputElement>('setup-pass2').value;
+  if (p.length < 8) { msg.hidden = false; msg.textContent = 'Use at least 8 characters.'; return; }
+  if (p !== p2) { msg.hidden = false; msg.textContent = 'The two entries do not match.'; return; }
+  msg.hidden = true;
+  void (async () => {
+    try {
+      await api('/vault/create', { passphrase: p });
+      $<HTMLInputElement>('setup-pass').value = '';
+      $<HTMLInputElement>('setup-pass2').value = '';
+      setupState();
+      const span = ttlSpan();
+      note(true, span === null ? 'Vault created — it is open now.' : `Vault created — it stays open for ${span}.`);
+      await reload();
+    } catch (e) {
+      msg.hidden = false;
+      msg.textContent = `The vault was not created: ${(e as Error).message}`;
+    }
+  })();
+});
+
 // ── 저장 ─────────────────────────────────────────────────────
 
-async function saveGroup(): Promise<void> {
-  // 앞뒤 공백은 잘라서 저장한다 — 복사·붙여넣기로 딸려오는 공백이 값의 일부가 되지 않게
-  for (const r of groups.get(current) ?? []) r.input.value = r.input.value.trim();
-  const pending = entered();
-  if (pending.length === 0) return note(false, 'Nothing entered in this group.');
-  // 형식이 틀린 게 하나라도 있으면 아무것도 저장하지 않는다 — 반쯤 저장된 상태를 만들지 않는다
-  const bad = checkFields(pending.filter((r) => r.field).map((r) => ({ field: r.field!, value: r.input.value })));
-  if (bad.length > 0) return note(false, `Nothing was saved. Expected format — ${bad.join(', ')}. The write is all-or-nothing, so fix it and save again.`);
-  const title = current === groupOf(current) && !SECTIONS.some((s) => s.id === current) ? current : (SECTIONS.find((s) => s.id === current)?.title ?? current);
-  // 한 요청으로 보낸다 — 서버가 복호화·재암호화를 한 번만 하고, 전부 저장되거나 아무것도 저장되지 않는다
-  try {
-    await api('/vault/set', {
-      passphrase: passphrase(),
-      entries: pending.map((r) => ({ key: r.key, type: r.type, value: r.input.value, grant: r.grant })),
-    });
-    for (const r of pending) r.input.value = '';
-    note(true, `Saved ${pending.length} ${pending.length === 1 ? 'key' : 'keys'} in ${title} — ${pending.map((r) => r.key).join(', ')}. Status refreshed.`);
-  } catch (e) {
-    note(false, `Nothing was saved: ${(e as Error).message}`);
-  }
-  void refreshHealth();
-  await refreshList().catch(() => {});
-}
-
-async function saveFreeKey(): Promise<void> {
-  const key = $<HTMLInputElement>('free-key').value.trim();
-  const value = $<HTMLInputElement>('free-value').value.trim();
-  if (!EXTRA_KEY.test(key)) return note(false, 'Key names are scope.field or scope.instance.field (e.g. example-shop.payment.pinnumber).');
-  if (!value) return note(false, 'Enter a value.');
-  try {
-    await api('/vault/set', {
-      passphrase: passphrase(), key, type: $<HTMLSelectElement>('free-type').value, value,
-      grant: $<HTMLInputElement>('free-grant').checked,
-    });
-    $<HTMLInputElement>('free-key').value = '';
-    $<HTMLInputElement>('free-value').value = '';
-    $<HTMLInputElement>('free-grant').checked = false;
-    note(true, `Saved ${key}. Status refreshed.`);
-    current = groupOf(key);
-    void refreshHealth();
-    await refreshList();
-  } catch (e) {
-    note(false, `Nothing was saved: ${(e as Error).message}`);
-  }
-}
-
 $('btn-save').addEventListener('click', () => {
-  if (!passphrase()) { $('pass').focus(); return note(false, 'Enter the master password first.'); }
-  void (current === 'add' ? saveFreeKey() : saveGroup());
+  if (vault !== 'open') return;
+  const pending = enteredRows();
+  if (pending.length === 0) return note(false, 'Nothing entered in this group.');
+  // 형식이 틀린 게 하나라도 있으면 비밀번호도 묻지 않는다 — 반쯤 저장된 상태를 만들지 않는다
+  const bad = checkFields(pending.filter((r) => r.field).map((r) => ({ field: r.field!, value: valueOf(r.key) })));
+  if (bad.length > 0) return note(false, `Nothing was saved. Expected format — ${bad.join(', ')}. The write is all-or-nothing, so fix it and save again.`);
+  openDialog('confirm');
 });
+
+async function saveGroup(passphrase: string): Promise<void> {
+  const group = current;
+  const pending = enteredRows();
+  // 한 요청으로 보낸다 — 서버가 복호화·재암호화를 한 번만 하고, 전부 저장되거나 아무것도 저장되지 않는다
+  const entries = pending.map((r) => ({ key: r.key, type: r.type, value: valueOf(r.key), grant: r.grant, label: r.label }));
+  await api('/vault/set', { passphrase, entries });
+  const saved = new Set(entries.map((e) => e.key));
+  for (const key of saved) { draft.delete(key); grantDraft.delete(key); }
+  const left = (pendingRows.get(group) ?? []).filter((p) => !saved.has(p.key));
+  if (left.length > 0) pendingRows.set(group, left); else pendingRows.delete(group);
+  newGroups.delete(group);
+  note(true, `Saved ${entries.length} ${entries.length === 1 ? 'key' : 'keys'} in ${titleOf(group)} — ${[...saved].join(', ')}. Status refreshed.`);
+  await reload();
+}
+
+// ── Test Mode · 초기화 ───────────────────────────────────────
+
+$('btn-test').addEventListener('click', () => { openDialog(testOn ? 'testOff' : 'testOn'); });
+$('btn-reset').addEventListener('click', () => { openDialog('wipe'); });
+$('btn-extend').addEventListener('click', () => { openDialog('extend'); });
+for (const btn of document.querySelectorAll<HTMLButtonElement>('.btn-unlock')) {
+  btn.addEventListener('click', () => { openDialog('unlock'); });
+}
+
+async function setTestMode(on: boolean): Promise<void> {
+  const r = (await api('/admin/test-mode', { on })) as { on?: boolean };
+  testOn = r.on === true;
+  render();
+  note(true, testOn ? 'Test Mode on — payment PINs are not typed.' : 'Test Mode off — payments are live.');
+}
+
+async function resetVault(): Promise<void> {
+  await api('/vault/reset', {});
+  existing = new Map();
+  pendingRows.clear();
+  newGroups.clear();
+  draft.clear();
+  grantDraft.clear();
+  held.clear();
+  current = SECTIONS[0]!.id;
+  note(true, 'The vault and every value in it are gone. Set a new master password to start again.');
+  await reload();
+}
+
+async function unlockVault(passphrase: string): Promise<void> {
+  const r = await api('/vault/unlock', { passphrase });
+  note(true, `Vault open for ${fmtRemain(Number(r['ttlMs'] ?? 0))}. Status refreshed.`);
+  await reload();
+}
+
+function createGroup(name: string): void {
+  const g = name.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-');
+  if (g === '') throw new Error('Enter a group name.');
+  newGroups.add(g);
+  current = g;
+  render();
+  $('add-panel').hidden = false;
+  $('btn-add-open').hidden = true;
+  note(true, `Key group ${g} created — add its first key below.`);
+}
+
+// ── 대화상자 (하나를 돌려 쓴다) ──────────────────────────────
+
+function openDialog(kind: Dlg): void {
+  dlg = kind;
+  const span = ttlSpan();
+  const n = enteredRows().length;
+  const needsPass = kind === 'confirm' || kind === 'unlock' || kind === 'extend';
+  let title = '';
+  let body = '';
+  let action = '';
+  if (kind === 'confirm') {
+    title = 'Master password';
+    body = `Confirms this write. ${n} ${n === 1 ? 'field' : 'fields'} in ${titleOf(current)} will be encrypted and stored — all of them or none.`;
+    action = `Save ${n} ${n === 1 ? 'key' : 'keys'}`;
+  } else if (kind === 'unlock') {
+    title = 'Open the vault';
+    body = span === null
+      ? 'The vault stays open until it locks itself. Agents can fill only while it is open.'
+      : `The vault stays open for ${span}, then locks itself. Agents can fill only while it is open.`;
+    action = 'Open vault';
+  } else if (kind === 'extend') {
+    title = 'Extend the session';
+    body = span === null
+      ? `Resets the timer. The current session has ${fmtRemain(ttlMs)} left.`
+      : `Resets the timer to a fresh ${span} from now. The current session has ${fmtRemain(ttlMs)} left.`;
+    action = span === null ? 'Extend' : `Extend ${span}`;
+  } else if (kind === 'group') {
+    title = 'New key group';
+    body = 'A group is the first part of every key inside it — example-shop holds example-shop.login.id. Nothing is written to the vault until its first key is saved.';
+    action = 'Create group';
+  } else if (kind === 'testOn') {
+    title = 'Turn on Test Mode?';
+    body = 'Payments stop going through: PINs are checked against their grant but never typed, and any key you hold back is left out of the run entirely.';
+    action = 'Turn on';
+  } else if (kind === 'testOff') {
+    title = 'Leave Test Mode?';
+    body = 'The next run pays for real. Every key fills for real, including the ones you were holding back.';
+    action = 'Go live';
+  } else if (kind === 'grantOff') {
+    title = 'Stop requiring a pay grant?';
+    body = `Any session will be able to fill ${grantOffRow?.label ?? 'this key'} without a pay grant from the calling service. Turning it back on takes one click.`;
+    action = 'Turn it off';
+  } else {
+    title = 'Reset the vault?';
+    body = 'Every registered key and its value is destroyed, along with the master password. You will set a new one before anything can be registered again. This cannot be undone.';
+    action = 'Reset vault';
+  }
+  $('dlg-title').textContent = title;
+  $('dlg-body').textContent = body;
+  $('dlg-submit').textContent = action;
+  $('dlg-submit').classList.toggle('danger', kind === 'wipe' || kind === 'grantOff');
+  $('dlg-icon-pass').hidden = !needsPass;
+  $('dlg-icon-test').hidden = !(kind === 'testOn' || kind === 'testOff');
+  $('dlg-icon-group').hidden = kind !== 'group';
+  $('dlg-pass-wrap').hidden = !needsPass;
+  $('dlg-group-wrap').hidden = kind !== 'group';
+  $('dlg-error').hidden = true;
+  $<HTMLInputElement>('dlg-pass').value = '';
+  $<HTMLInputElement>('dlg-group').value = '';
+  $('dialog').hidden = false;
+  ($(needsPass ? 'dlg-pass' : kind === 'group' ? 'dlg-group' : 'dlg-submit') as HTMLElement).focus();
+}
+
+function closeDialog(): void {
+  dlg = null;
+  grantOffRow = null;
+  $('dialog').hidden = true;
+  $<HTMLInputElement>('dlg-pass').value = '';
+  $<HTMLInputElement>('dlg-group').value = '';
+}
+
+function dlgError(text: string): void {
+  const p = $('dlg-error');
+  p.hidden = false;
+  p.textContent = text;
+}
+
+function submitDialog(): void {
+  const kind = dlg;
+  if (kind === null) return;
+  const pass = $<HTMLInputElement>('dlg-pass').value;
+  if (kind === 'group') {
+    try {
+      createGroup($<HTMLInputElement>('dlg-group').value);
+      closeDialog();
+    } catch (e) {
+      dlgError((e as Error).message);
+    }
+    return;
+  }
+  if (kind === 'grantOff') {
+    const r = grantOffRow;
+    closeDialog();
+    if (r !== null) void applyGrant(r, false);
+    return;
+  }
+  const run = kind === 'confirm' ? saveGroup(pass)
+    : kind === 'unlock' || kind === 'extend' ? unlockVault(pass)
+      : kind === 'wipe' ? resetVault()
+        : setTestMode(kind === 'testOn');
+  void run.then(() => { closeDialog(); }).catch((e: Error) => { dlgError(e.message); });
+}
+
+$('dlg-submit').addEventListener('click', () => { submitDialog(); });
+$('dlg-cancel').addEventListener('click', () => { closeDialog(); });
+$('dialog').addEventListener('click', (e) => { if (e.target === $('dialog')) closeDialog(); });
+$('dialog-card').addEventListener('click', (e) => { e.stopPropagation(); });
+for (const id of ['dlg-pass', 'dlg-group']) {
+  $(id).addEventListener('keydown', (e) => {
+    if ((e as KeyboardEvent).key === 'Enter') { e.preventDefault(); submitDialog(); }
+  });
+}
+window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && dlg !== null) closeDialog(); });
 
 // ── 초기화 ───────────────────────────────────────────────────
 
@@ -401,9 +756,17 @@ async function bootstrap(): Promise<void> {
   }
   if (token()) {
     show('view-main');
-    void refreshHealth();
-    void refreshDryRun();
-    setInterval(() => { void refreshHealth(); void refreshDryRun(); }, 30_000); // TTL 만료·첫 저장·dry-run을 레일에 반영
+    void reload();
+    // TTL 만료·잠김·Test Mode를 레일에 반영한다. 상태가 바뀌었을 때만 목록을 다시 읽는다
+    setInterval(() => {
+      void (async () => {
+        const before = vault;
+        await refreshHealth();
+        await refreshTestMode();
+        if (before !== vault) await reload();
+        else render();
+      })();
+    }, 30_000);
   } else {
     show('view-login');
   }

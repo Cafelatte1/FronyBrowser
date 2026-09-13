@@ -10,58 +10,70 @@
 </head>
 <body>
   <!-- 로그인 화면 -->
-  <section id="view-login" class="login" hidden>
-    <div class="brand">
-      <img src="./brand/frony-mark.ico" alt="">
-      <span class="brand-name"><b>FRONY</b><i></i><span>Browser</span></span>
+  <section id="view-login" class="login" data-ambient hidden>
+    <div class="login-card">
+      <span class="lockup lockup-lg">
+        <svg viewBox="18 10 22 22" aria-hidden="true">
+          <defs><linearGradient id="sparkLogin" x1="19.09" y1="20.95" x2="39" y2="20.95" gradientUnits="userSpaceOnUse"><stop stop-color="var(--brand-1)"></stop><stop offset="1" stop-color="var(--brand-2-deep)"></stop></linearGradient></defs>
+          <path fill="url(#sparkLogin)" d="M26.107 14.448C26.705 12.698 29.123 12.645 29.832 14.289L29.892 14.449L30.699 16.809C30.8839 17.3502 31.1828 17.8455 31.5754 18.2614C31.968 18.6773 32.4453 19.0042 32.975 19.22L33.192 19.301L35.552 20.107C37.302 20.705 37.355 23.123 35.712 23.832L35.552 23.892L33.192 24.699C32.6506 24.8838 32.1551 25.1826 31.739 25.5753C31.3229 25.9679 30.9959 26.4452 30.78 26.975L30.699 27.191L29.893 29.552C29.295 31.302 26.877 31.355 26.169 29.712L26.107 29.552L25.301 27.192C25.1162 26.6506 24.8174 26.1551 24.4247 25.739C24.0321 25.3229 23.5548 24.9959 23.025 24.78L22.809 24.699L20.449 23.893C18.698 23.295 18.645 20.877 20.289 20.169L20.449 20.107L22.809 19.301C23.3502 19.1161 23.8455 18.8172 24.2614 18.4246C24.6773 18.0319 25.0042 17.5547 25.22 17.025L25.301 16.809L26.107 14.448Z"></path>
+          <path fill="url(#sparkLogin)" d="M36 11C36.1871 11 36.3704 11.0525 36.5291 11.1515C36.6879 11.2505 36.8157 11.392 36.898 11.56L36.946 11.677L37.296 12.703L38.323 13.053C38.5105 13.1167 38.6748 13.2346 38.7952 13.3918C38.9156 13.549 38.9866 13.7384 38.9993 13.936C39.0119 14.1336 38.9656 14.3305 38.8662 14.5018C38.7668 14.673 38.6188 14.8109 38.441 14.898L38.323 14.946L37.297 15.296L36.947 16.323C36.8832 16.5104 36.7652 16.6747 36.6079 16.795C36.4506 16.9153 36.2612 16.9862 36.0636 16.9987C35.866 17.0113 35.6692 16.9648 35.498 16.8654C35.3268 16.7659 35.189 16.6179 35.102 16.44L35.054 16.323L34.704 15.297L33.677 14.947C33.4895 14.8833 33.3251 14.7654 33.2048 14.6082C33.0844 14.451 33.0133 14.2616 33.0007 14.064C32.9881 13.8664 33.0344 13.6695 33.1338 13.4982C33.2332 13.327 33.3811 13.1891 33.559 13.102L33.677 13.054L34.703 12.704L35.053 11.677C35.1204 11.4794 35.248 11.3079 35.4178 11.1865C35.5876 11.0651 35.7912 10.9999 36 11Z"></path>
+        </svg>
+        <span class="wordmark"><b>FRONY</b><i></i><span>Browser</span></span>
+      </span>
+      <p class="caption muted center sub">Sign in to manage the personal data vault</p>
+      <form id="login-form" class="login-fields">
+        <input id="login-user" placeholder="Username" autocomplete="username" required>
+        <input id="login-pass" type="password" placeholder="Password" autocomplete="current-password" required>
+        <button type="submit" class="cta wide">Sign in</button>
+      </form>
+      <p id="login-msg" class="strip danger" hidden>
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><circle cx="10" cy="10" r="7.4"></circle><path d="M10 6.3v4.4M10 13.4h.01"></path></svg>
+        <span id="login-msg-text"></span>
+      </p>
+      <p class="meta disabled center foot">Reachable on the server's Tailscale address or loopback only. Every attempt is written to the audit log.</p>
     </div>
-    <div>
-      <h1 class="display">Personal data vault</h1>
-      <p class="caption muted">Admin sign-in with your FronyAuth account. The vault's master password is asked for separately, on every write.</p>
-    </div>
-    <form id="login-form" class="login-card">
-      <div class="float">
-        <label for="login-user">Username</label>
-        <input id="login-user" autocomplete="username" required>
-      </div>
-      <div class="float">
-        <label for="login-pass">Password</label>
-        <input id="login-pass" type="password" autocomplete="current-password" required>
-      </div>
-      <p id="login-msg" class="alert danger" hidden></p>
-      <button type="submit" class="primary wide">Sign in</button>
-    </form>
-    <p class="meta disabled">Reachable on the server's Tailscale address or loopback only. Every attempt is written to the audit log.</p>
   </section>
 
-  <!-- 메인 화면 -->
+  <!-- 콘솔 -->
   <section id="view-main" class="shell" hidden>
     <aside class="rail">
-      <div class="brand">
-        <img src="./brand/frony-mark.ico" alt="">
-        <span class="brand-name"><b>FRONY</b><i></i><span>Browser</span></span>
+      <div class="lockup lockup-sm">
+        <svg viewBox="18 10 22 22" aria-hidden="true">
+          <defs><linearGradient id="sparkRail" x1="19.09" y1="20.95" x2="39" y2="20.95" gradientUnits="userSpaceOnUse"><stop stop-color="var(--brand-1)"></stop><stop offset="1" stop-color="var(--brand-2-deep)"></stop></linearGradient></defs>
+          <path fill="url(#sparkRail)" d="M26.107 14.448C26.705 12.698 29.123 12.645 29.832 14.289L29.892 14.449L30.699 16.809C30.8839 17.3502 31.1828 17.8455 31.5754 18.2614C31.968 18.6773 32.4453 19.0042 32.975 19.22L33.192 19.301L35.552 20.107C37.302 20.705 37.355 23.123 35.712 23.832L35.552 23.892L33.192 24.699C32.6506 24.8838 32.1551 25.1826 31.739 25.5753C31.3229 25.9679 30.9959 26.4452 30.78 26.975L30.699 27.191L29.893 29.552C29.295 31.302 26.877 31.355 26.169 29.712L26.107 29.552L25.301 27.192C25.1162 26.6506 24.8174 26.1551 24.4247 25.739C24.0321 25.3229 23.5548 24.9959 23.025 24.78L22.809 24.699L20.449 23.893C18.698 23.295 18.645 20.877 20.289 20.169L20.449 20.107L22.809 19.301C23.3502 19.1161 23.8455 18.8172 24.2614 18.4246C24.6773 18.0319 25.0042 17.5547 25.22 17.025L25.301 16.809L26.107 14.448Z"></path>
+          <path fill="url(#sparkRail)" d="M36 11C36.1871 11 36.3704 11.0525 36.5291 11.1515C36.6879 11.2505 36.8157 11.392 36.898 11.56L36.946 11.677L37.296 12.703L38.323 13.053C38.5105 13.1167 38.6748 13.2346 38.7952 13.3918C38.9156 13.549 38.9866 13.7384 38.9993 13.936C39.0119 14.1336 38.9656 14.3305 38.8662 14.5018C38.7668 14.673 38.6188 14.8109 38.441 14.898L38.323 14.946L37.297 15.296L36.947 16.323C36.8832 16.5104 36.7652 16.6747 36.6079 16.795C36.4506 16.9153 36.2612 16.9862 36.0636 16.9987C35.866 17.0113 35.6692 16.9648 35.498 16.8654C35.3268 16.7659 35.189 16.6179 35.102 16.44L35.054 16.323L34.704 15.297L33.677 14.947C33.4895 14.8833 33.3251 14.7654 33.2048 14.6082C33.0844 14.451 33.0133 14.2616 33.0007 14.064C32.9881 13.8664 33.0344 13.6695 33.1338 13.4982C33.2332 13.327 33.3811 13.1891 33.559 13.102L33.677 13.054L34.703 12.704L35.053 11.677C35.1204 11.4794 35.248 11.3079 35.4178 11.1865C35.5876 11.0651 35.7912 10.9999 36 11Z"></path>
+        </svg>
+        <span class="wordmark"><b>FRONY</b><i></i><span>Browser</span></span>
       </div>
 
       <div id="vault-open" class="status-card" hidden>
-        <span class="status-title"><i class="dot success"></i>Vault open</span>
+        <div class="status-head">
+          <span class="status-title"><i class="dot success"></i>Vault open</span>
+          <button id="btn-test" class="pill" data-test="off">Test Mode</button>
+        </div>
+        <div id="test-note" class="test-note" hidden>Payment PINs are checked against their grant but never typed. Click a key name to hold it back from test runs too.</div>
         <div>
           <div id="vault-remain" class="mono big">–</div>
           <div class="meta muted">until it locks itself · agents can fill</div>
         </div>
-        <div class="bar"><div id="vault-bar"></div></div>
-        <button class="btn-unlock accent-outline">Extend with master password</button>
+        <div id="vault-bar-track" class="bar"><div id="vault-bar"></div></div>
+        <button id="btn-extend" class="accent-outline">Extend session</button>
       </div>
+
       <div id="vault-locked" class="status-card warning" hidden>
         <span class="status-title"><i class="dot warning"></i>Vault locked</span>
-        <div class="meta">Every agent fill is failing right now. You can still register values here — they just cannot be used until the vault is opened.</div>
-        <button class="btn-unlock warning-outline">Open with master password</button>
+        <div class="meta">Nothing can be read, written or filled until you open it.</div>
+        <button class="btn-unlock warning-outline">Open vault</button>
       </div>
+
       <div id="vault-missing" class="status-card dashed" hidden>
         <span class="status-title muted"><i class="dot disabled"></i>No vault yet</span>
-        <div class="meta muted">The master password you use on your first save becomes the one for this vault. There is no way to recover it.</div>
+        <div class="meta muted">Set a master password to create it. Nothing works until you do.</div>
       </div>
-      <div id="vault-offline" class="status-card warning" hidden>
-        <span class="status-title"><i class="dot warning"></i>Server unreachable</span>
+
+      <div id="vault-offline" class="status-card dashed" hidden>
+        <span class="status-title muted"><i class="dot disabled"></i>Server unreachable</span>
+        <div class="meta muted">The console cannot see the vault. Check that the server is running.</div>
       </div>
 
       <nav id="nav" class="nav">
@@ -69,70 +81,159 @@
       </nav>
 
       <div class="rail-foot">
-        <div id="dry-on" class="dry-card" hidden>
-          <span class="dry-title">
-            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M10 3.2 2.6 16.2h14.8L10 3.2Z" stroke-linejoin="round"/><path d="M10 8v3.4M10 13.6h.01" stroke-linecap="round"/></svg>
-            DRY RUN
-          </span>
-          <span class="meta">Payment PINs are checked against their grant but never typed — a live run finishes as if it had paid.</span>
-          <button id="btn-dry-off" class="danger-outline small">Turn off</button>
-        </div>
-        <div id="dry-off" class="dry-row" hidden>
-          <span class="meta muted"><i class="dot disabled"></i>Payments live</span>
-          <button id="btn-dry-on" class="ghost tiny">DRY RUN</button>
-        </div>
         <button id="btn-logout" class="ghost small">Sign out</button>
+        <button id="btn-reset" class="danger-outline small">Reset vault</button>
       </div>
     </aside>
 
     <div class="content">
-      <div id="panes"></div>
+      <header class="pane-head">
+        <div class="pane-head-text">
+          <h1 id="pane-title" class="display">Personal</h1>
+          <p id="pane-blurb" class="caption muted"></p>
+        </div>
+        <div class="pane-head-actions">
+          <button id="btn-del-group" class="danger-outline small" hidden>Delete group</button>
+          <span id="save-controls" class="save-controls" hidden>
+            <span id="entered" class="caption muted"><span class="mono text">0</span> fields entered</span>
+            <button id="btn-save" class="cta" data-save="off">Save this group</button>
+          </span>
+          <span id="lock-notice" class="lock-pill" hidden>
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="4.6" y="9" width="10.8" height="7.4" rx="1.8"></rect><path d="M7.3 9V6.9A2.7 2.7 0 0 1 12.7 6.9V9" stroke-linecap="round"></path></svg>
+            Saving is off until the vault is open
+          </span>
+        </div>
+      </header>
 
-      <div id="pane-add" class="pane" hidden>
-        <header class="pane-head">
-          <h1 class="display">Add a key</h1>
-          <p class="caption muted">For anything outside the three built-in groups — a site login, a payment PIN. Names take one of two shapes, and the first part becomes the group this key appears under.</p>
-        </header>
-        <div class="pane-body add-form">
-          <div class="float bg">
-            <label for="free-key">Key name</label>
-            <input id="free-key" class="mono" placeholder="example-shop.payment.pinnumber" autocomplete="off">
-            <div class="meta muted key-shapes">
-              <span class="mono accent">scope.field</span><span>for a single value ·</span>
-              <span class="mono accent">scope.instance.field</span><span>when several can exist</span>
-            </div>
+      <div id="banner" class="banner" role="status" hidden>
+        <i class="dot success banner-dot"></i>
+        <svg class="banner-icon" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10" cy="10" r="7"></circle><path d="M10 6.6v4.2M10 13.4h.01" stroke-linecap="round"></path></svg>
+        <span id="banner-text"></span>
+      </div>
+
+      <!-- 잠김 -->
+      <div id="pane-locked" class="centered-pane" hidden>
+        <div class="notice-card">
+          <span class="notice-icon warning">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4.4" y="8.8" width="11.2" height="7.8" rx="2"></rect><path d="M7.2 8.8V6.7A2.8 2.8 0 0 1 12.8 6.7V8.8" stroke-linecap="round"></path></svg>
+          </span>
+          <div>
+            <h2 class="title">Open the vault first</h2>
+            <p id="locked-blurb" class="caption muted"></p>
           </div>
-          <div class="add-row">
-            <div class="float bg type">
-              <label for="free-type">Type</label>
-              <select id="free-type">
-                <option>text</option><option>card</option><option>phone</option><option>rrn</option>
-                <option>email</option><option>name</option><option>address</option>
-              </select>
-            </div>
-            <div class="float bg grow">
-              <label for="free-value">Value</label>
-              <input id="free-value" autocomplete="off">
-            </div>
-          </div>
-          <label class="check caption"><input id="free-grant" type="checkbox"> Requires a pay grant — only for a value whose entry is itself the irreversible step (a payment PIN, a card password)</label>
-          <p class="meta disabled">The type decides which forms of the value the server redacts on its way out — a card number is also caught spaced, hyphenated and part-masked.</p>
+          <button class="btn-unlock cta">Open vault</button>
         </div>
       </div>
 
-      <div class="savebar">
-        <div id="msg" class="feedback" hidden></div>
-        <div class="savebar-row">
-          <div class="float grow">
-            <label for="pass">Master password</label>
-            <input id="pass" type="password" autocomplete="off" placeholder="Confirms every write · never stored">
+      <!-- 금고 없음 -->
+      <div id="pane-create" class="centered-pane" hidden>
+        <div class="setup-card">
+          <div class="setup-head">
+            <span class="notice-icon accent small">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4.4" y="8.8" width="11.2" height="7.8" rx="2"></rect><path d="M7.2 8.8V6.7A2.8 2.8 0 0 1 12.8 6.7V8.8" stroke-linecap="round"></path></svg>
+            </span>
+            <div>
+              <h2 class="title">Set the master password</h2>
+              <p class="caption muted">There is no vault on this server yet. Nothing can be registered or filled until you set this — it is never stored, and if it is lost every value in the vault is lost with it.</p>
+            </div>
           </div>
-          <span id="entered" class="caption muted"><span class="mono text">0</span> fields entered</span>
-          <button id="btn-save" class="primary">Save this group</button>
+          <div class="setup-fields">
+            <div class="float">
+              <label for="setup-pass">Master password</label>
+              <input id="setup-pass" type="password" autocomplete="new-password">
+            </div>
+            <div class="float">
+              <label for="setup-pass2">Repeat it</label>
+              <input id="setup-pass2" type="password" autocomplete="new-password">
+            </div>
+            <p id="setup-msg" class="strip danger small-strip" hidden></p>
+            <span class="meta disabled">At least 8 characters. There is no recovery and no reset from outside this machine.</span>
+          </div>
+          <button id="btn-setup" class="cta wide" data-save="off">Create vault</button>
+        </div>
+      </div>
+
+      <!-- 금고 열림 -->
+      <div id="pane-rows" class="scroll" hidden>
+        <div id="unnamed" class="unnamed" hidden>
+          <span id="unnamed-text" class="meta"></span>
+          <button id="btn-seed" class="ghost tiny">Name them</button>
+        </div>
+        <div id="rows" class="rows">
+          <div class="rowhead"><span>KEY</span><span class="center-cell">GRANT</span><span class="center-cell">STATUS</span><span>NEW VALUE</span><span></span></div>
+        </div>
+        <div id="add-area" class="add-area" hidden>
+          <button id="btn-add-open" class="add-open">
+            <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M10 4.5v11M4.5 10h11" stroke-linecap="round"></path></svg>
+            Add a key to this group
+          </button>
+          <div id="add-panel" class="add-panel" hidden>
+            <div class="add-fields">
+              <div class="float grow">
+                <label for="add-name">Display name</label>
+                <input id="add-name" placeholder="Login ID" autocomplete="off">
+              </div>
+              <div class="float grow">
+                <label for="add-field">Key name</label>
+                <input id="add-field" class="mono" placeholder="login.id" autocomplete="off">
+                <span class="meta muted">two parts: subject and field</span>
+              </div>
+              <div class="float type">
+                <label for="add-type">Type</label>
+                <select id="add-type" class="mono">
+                  <option>text</option><option>card</option><option>phone</option><option>rrn</option>
+                  <option>email</option><option>name</option><option>address</option>
+                </select>
+              </div>
+            </div>
+            <div class="add-foot">
+              <span class="meta muted">Stored as <span id="add-full" class="mono accent"></span> — adding it writes nothing yet; type its value in the row and save the group.</span>
+              <span class="add-buttons">
+                <button id="btn-add-discard" class="ghost small">Discard</button>
+                <button id="btn-add-key" class="cta small">Add key</button>
+              </span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   </section>
+
+  <!-- 마스터 비밀번호 대화상자 (하나를 돌려 쓴다) -->
+  <div id="dialog" class="dialog-backdrop" hidden>
+    <div id="dialog-card" class="dialog-card">
+      <div class="dialog-head">
+        <span id="dlg-icon-pass" class="notice-icon accent small">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4.4" y="8.8" width="11.2" height="7.8" rx="2"></rect><path d="M7.2 8.8V6.7A2.8 2.8 0 0 1 12.8 6.7V8.8" stroke-linecap="round"></path></svg>
+        </span>
+        <span id="dlg-icon-test" class="notice-icon info small" hidden>
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M7.4 4.6v10.8l8-5.4-8-5.4Z" stroke-linejoin="round"></path><path d="M3.4 4.6v10.8" stroke-linecap="round"></path></svg>
+        </span>
+        <span id="dlg-icon-group" class="notice-icon accent small" hidden>
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.6 6.2A1.6 1.6 0 0 1 4.2 4.6h2.9l1.6 2h7A1.6 1.6 0 0 1 17.3 8.2v6.2a1.6 1.6 0 0 1-1.6 1.6H4.2a1.6 1.6 0 0 1-1.6-1.6V6.2Z"></path><path d="M10 9.4v4M8 11.4h4" stroke-linecap="round"></path></svg>
+        </span>
+        <div class="dialog-text">
+          <h2 id="dlg-title" class="title"></h2>
+          <p id="dlg-body" class="caption muted"></p>
+        </div>
+      </div>
+      <div id="dlg-fields" class="dialog-fields">
+        <div id="dlg-group-wrap" class="float" hidden>
+          <label for="dlg-group">Key group name</label>
+          <input id="dlg-group" class="mono" placeholder="example-shop" autocomplete="off">
+        </div>
+        <div id="dlg-pass-wrap" class="float" hidden>
+          <label for="dlg-pass">Master password</label>
+          <input id="dlg-pass" type="password" autocomplete="off">
+        </div>
+        <p id="dlg-error" class="strip danger small-strip" hidden></p>
+      </div>
+      <div class="dialog-actions">
+        <button id="dlg-cancel" class="ghost">Cancel</button>
+        <button id="dlg-submit" class="cta"></button>
+      </div>
+    </div>
+  </div>
   <script type="module" src="./src/main.ts"></script>
 </body>
 </html>

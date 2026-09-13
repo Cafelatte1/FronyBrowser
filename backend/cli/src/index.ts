@@ -1,12 +1,14 @@
 /**
  * 금고 등록·삭제·목록·unlock.
  *
- *   wallet set <key> --type <card|phone|rrn|email|name|address|text> [--grant]
- *   wallet rm <key>
+ *   wallet set <group.subject.field> --type <card|phone|rrn|email|name|address|text> [--grant] [--label "<name>"]
+ *   wallet rm <group.subject.field>
  *   wallet list
+ *   wallet relabel            — 이름이 비어 있는 항목에 기본 이름을 지어 넣는다 (백업을 먼저 만든다, FWL-056)
+ *   wallet migrate-keys       — 두 조각이던 옛 키 이름을 `그룹.대상.항목`으로 옮긴다 (백업을 먼저 만든다, FWL-057)
  *   wallet unlock              — 서버의 /vault/unlock 호출 (admin 기기에서만)
  *   wallet handoff             — 재시작 직전에 /vault/handoff 호출: 다음 프로세스가 같은 만료로 unlock을 이어받는다 (FWL-042)
- *   wallet status              — 금고 상태(/health) + dry-run 토글 (데이터 디렉터리의 dry-run.json, 서버 머신에서)
+ *   wallet status              — 금고 상태(/health) + TEST MODE 토글 (데이터 디렉터리의 test-mode.json, 서버 머신에서)
  *
  * 값·패스프레이즈는 터미널 숨김 입력으로만 받는다.
  * 금고 파일은 WALLET_DATA_DIR (기본 %LOCALAPPDATA%\Frony\FronyBrowser\data)의 vault.dpapi다.
@@ -16,10 +18,12 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ValueType, VaultEntry } from '@wallet/core';
-import { defaultDataDir, readDryRunFlag, readVaultFile, writeVaultFile } from '@wallet/core';
+import { defaultDataDir, defaultLabelFor, migrateKeyNames, readTestModeFlag, readVaultFile, seedLabels, writeVaultFile } from '@wallet/core';
 import { promptHidden } from './prompt.js';
 
 const TYPES = ['card', 'phone', 'rrn', 'email', 'name', 'address', 'text'] as const;
+/** 키 이름은 `그룹.대상.항목` 세 조각 고정 (FWL-057) — 서버의 admin 핸들러와 같은 식이다 */
+const KEY_NAME = /^[a-z0-9-]+\.[a-z0-9-]+\.[a-z0-9-]+$/;
 
 function vaultPath(): string {
   const dir = defaultDataDir();
@@ -29,7 +33,7 @@ function vaultPath(): string {
 
 function usage(): never {
   console.error(
-    'usage: wallet set <key> --type <t> [--grant] | wallet rm <key> | wallet list | wallet unlock | wallet status',
+    'usage: wallet set <group.subject.field> --type <t> [--grant] [--label "<name>"] | wallet rm <group.subject.field> | wallet list | wallet relabel | wallet migrate-keys | wallet unlock | wallet handoff | wallet status',
   );
   console.error(`  types: ${TYPES.join(' ')}`);
   process.exit(2);
@@ -65,7 +69,14 @@ async function main(): Promise<void> {
     const typeIdx = rest.indexOf('--type');
     const type = typeIdx >= 0 ? rest[typeIdx + 1] : undefined;
     if (!type || !(TYPES as readonly string[]).includes(type)) usage();
+    if (!KEY_NAME.test(key)) {
+      console.error(`키 이름은 그룹.대상.항목 세 조각이어야 합니다 (소문자·숫자·하이픈): ${key}`);
+      process.exit(1);
+    }
     const grant = rest.includes('--grant');
+    const labelIdx = rest.indexOf('--label');
+    const labelArg = labelIdx >= 0 ? rest[labelIdx + 1]?.trim() : undefined;
+    if (labelIdx >= 0 && !labelArg) usage();
 
     const passphrase = await promptHidden('마스터 비밀번호: ');
     const value = await promptHidden(`value for ${key}: `);
@@ -74,9 +85,11 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     const entries = await openOrInit(path, passphrase);
-    entries.set(key, { type: type as ValueType, value, grant });
+    // 이름은 보낸 값 > 이미 붙어 있던 이름 > 키에서 지어낸 기본값 순 (FWL-056)
+    const label = labelArg || entries.get(key)?.label || defaultLabelFor(key);
+    entries.set(key, { type: type as ValueType, value, grant, label });
     writeVaultFile(path, passphrase, entries);
-    console.log(`ok: ${key} (${type}${grant ? ', grant' : ''}) 저장됨 — 값 길이 ${value.length}`);
+    console.log(`ok: ${label} · ${key} (${type}${grant ? ', grant' : ''}) 저장됨 — 값 길이 ${value.length}`);
     return;
   }
 
@@ -100,7 +113,33 @@ async function main(): Promise<void> {
       console.log('(비어 있음)');
       return;
     }
-    for (const [name, e] of entries) console.log(`${name}\t${e.type}${e.grant ? ' grant' : ''}\tlen=${e.value.length}`);
+    for (const [name, e] of entries) console.log(`${e.label}\t${name}\t${e.type}${e.grant ? ' grant' : ''}\tlen=${e.value.length}`);
+    return;
+  }
+
+  if (cmd === 'relabel') {
+    const passphrase = await promptHidden('마스터 비밀번호: ');
+    await openOrInit(path, passphrase); // 열리는지 먼저 확인 — 틀린 비밀번호는 여기서 끝난다
+    const { backup, seeded } = seedLabels(path, passphrase);
+    if (seeded.length === 0) {
+      console.log('이름을 채울 항목이 없습니다.');
+      return;
+    }
+    console.log(`백업: ${backup}`);
+    for (const { key: k, label } of seeded) console.log(`${k} → ${label}`);
+    return;
+  }
+
+  if (cmd === 'migrate-keys') {
+    const passphrase = await promptHidden('마스터 비밀번호: ');
+    await openOrInit(path, passphrase); // 열리는지 먼저 확인 — 틀린 비밀번호는 여기서 끝난다
+    const { backup, moved } = migrateKeyNames(path, passphrase);
+    if (moved.length === 0) {
+      console.log('옮길 키가 없습니다.');
+      return;
+    }
+    console.log(`백업: ${backup}`);
+    for (const { from, to } of moved) console.log(`${from} → ${to}`);
     return;
   }
 
@@ -137,11 +176,11 @@ async function main(): Promise<void> {
   }
 
   if (cmd === 'status') {
-    // dry-run은 /health에 없다(에이전트가 읽는 경로). 서버 머신에서 데이터 디렉터리의 파일을 직접 읽는다 (FWL-035)
-    if (readDryRunFlag(join(defaultDataDir(), 'dry-run.json'))) {
-      console.warn('★ DRY RUN 켜짐 — grant 키는 입력하지 않는다. 실주행 전에 관리 UI에서 끈다');
+    // Test Mode는 /health에 없다(에이전트가 읽는 경로). 서버 머신에서 데이터 디렉터리의 파일을 직접 읽는다 (FWL-035)
+    if (readTestModeFlag(join(defaultDataDir(), 'test-mode.json')).on) {
+      console.warn('★ TEST MODE 켜짐 — grant 키는 입력하지 않는다. 실주행 전에 관리 UI에서 끈다');
     } else {
-      console.log('dry-run: off');
+      console.log('test mode: off');
     }
     const server = process.env['WALLET_SERVER'];
     if (server) {
