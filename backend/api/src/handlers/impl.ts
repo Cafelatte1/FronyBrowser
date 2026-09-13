@@ -24,8 +24,8 @@ import type {
   Session,
 } from '@wallet/core';
 import { KeyNotFoundError, VaultLockedError, fail, failFromUnknown, findKeys, markGrantUsed, resolve, verifyPayGrant, writeUnlockHandoff } from '@wallet/core';
-import type { BrowserProfile, Cipher, KeypadSpec, LaunchProfile, PageImage, Ref, SnapshotOptions, TargetKind, TestMode } from '@wallet/core';
-import { isBrowserProfile } from '@wallet/core';
+import type { BrowserProfile, Cipher, KeypadSpec, LaunchProfile, OriginProfiles, PageImage, Ref, SnapshotOptions, TargetKind, TestMode } from '@wallet/core';
+import { isBrowserProfile, profileLabel, sameProfile } from '@wallet/core';
 import { TargetError } from '@wallet/app';
 
 export type HandlerDeps = {
@@ -40,6 +40,8 @@ export type HandlerDeps = {
   readonly testMode?: TestMode;
   /** unlock 인계 파일 경로 (FWL-042). 없으면 vault_handoff는 거부된다 */
   readonly handoffFile?: string;
+  /** origin별로 로그인까지 갔던 기동 조합 (FWL-065). 없으면 호출자 말을 그대로 따른다 — 기억도 검사도 없다 */
+  readonly originProfiles?: OriginProfiles;
   readonly handoffCipher?: Cipher;
 };
 
@@ -114,9 +116,33 @@ export function createHandlers(deps: HandlerDeps) {
       if (!targets.has(kind)) return fail('bad_request', `unknown target kind "${kind}"`);
       if (req.browser !== undefined && !BROWSER_PROFILES.includes(req.browser)) return fail('bad_request', 'browser must be "chromium" or "chrome"');
       // 호출자가 고른다 — 사이트별 조합은 플레이북 지식이다 (FWL-055). chrome/headful을 못 띄우면 browser_unavailable로 그대로 실패한다
-      const profile: LaunchProfile = kind === 'browser'
+      const wanted: LaunchProfile = kind === 'browser'
         ? { kind, browser: req.browser ?? 'chromium', headless: req.headless ?? true }
         : { kind };
+      let profile = wanted;
+      // 이 origin이 로그인까지 갔던 조합이 있으면 그게 이긴다 (FWL-065). 호출자가 아무 말도 안 했으면 그대로 쓰고,
+      // 다른 걸 지목했으면 열지 않고 거절한다 — 차단은 정상 응답으로 도착하므로 조용히 진행하면
+      // 에이전트가 막힌 페이지를 읽으며 헤매는 것으로 끝난다
+      if (isBrowserProfile(wanted)) {
+        const remembered = deps.originProfiles?.get(req.origin);
+        if (remembered && req.browser === undefined && req.headless === undefined) {
+          profile = { kind: 'browser', browser: remembered.browser, headless: remembered.headless };
+        } else if (remembered && !sameProfile(remembered, wanted)) {
+          // 세션을 열기 전이라 sid가 없다. 조합은 값이 아니라 설정이므로 감사와 메시지 양쪽에 그대로 적는다 (규칙 5)
+          audit.append({
+            evt: 'action_failed',
+            sid: null,
+            client: caller.client,
+            traceId: req.traceId ?? null,
+            origin: req.origin,
+            kind: 'session_begin',
+            code: 'profile_mismatch',
+            profile: wanted,
+            remembered: profileLabel(remembered),
+          });
+          return fail('profile_mismatch', `${req.origin} last logged in with ${profileLabel(remembered)}; asked for ${profileLabel(wanted)}`);
+        }
+      }
       const begun = sessions.begin(caller.client, req, profile);
       if (!begun.ok) {
         return begun.code === 'lease_conflict'
@@ -136,6 +162,9 @@ export function createHandlers(deps: HandlerDeps) {
       } catch (e) {
         sessions.end(begun.session.id, 'error');
         const f = toFailure(e);
+        // 기억한 조합이 아예 뜨지 못하면 기억을 버린다 (FWL-065) — 크롬이 사라진 경우 등.
+        // 여기 닿는 시점에 기억이 있다면 profile은 반드시 그 기억과 같다 (다르면 위에서 이미 거절했다)
+        if (f.error.code === 'browser_unavailable') deps.originProfiles?.forget(req.origin);
         // 세션 시작 실패도 남긴다 (FWL-063). 없으면 browser_unavailable의 원인이 어디에도 안 남아
         // 운영자가 Chrome을 고쳐야 하는지 로그온을 해야 하는지 알 길이 없다.
         // reason은 분류값이고 예외 메시지가 아니다 (규칙 5) — profile과 짝지어야 뜻이 산다
@@ -208,6 +237,14 @@ export function createHandlers(deps: HandlerDeps) {
       const target = targetOf(found.session);
       sessions.end(id, 'normal');
       await target.close(id, { persist: loggedIn === true }).catch(() => {});
+      // 로그인까지 갔다 = 이 조합이 차단당하지 않았다 (FWL-065). 쿠키를 덮어쓸 때 이미 믿는 단언을 같은 자리에서 한 번 더 쓴다.
+      // 단, 호출자가 스스로 고른 조합만 배운다 — 아무도 고르지 않은 기본값은 아무것도 증명하지 않는다.
+      // keepalive가 그 경우다: 조합을 생략하고 열어서 `loggedIn` 자리에 "홈이 열렸다"를 싣는데,
+      // 쿠팡 홈은 헤드리스로도 열린다 (2026-09-13 실측) — 이 단서가 없으면 keepalive가 틀린 조합을 굳혀 버린다
+      const chosen = found.session.request.browser !== undefined || found.session.request.headless !== undefined;
+      if (loggedIn === true && chosen && isBrowserProfile(found.session.profile)) {
+        deps.originProfiles?.remember(found.session.origin, found.session.profile);
+      }
       audit.append({
         evt: 'session_end',
         ...baseAudit(found.session, caller),

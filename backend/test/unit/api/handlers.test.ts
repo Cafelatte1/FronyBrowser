@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { TestMode } from '@wallet/core';
-import { VaultLockedError, createMemoryAudit, createMemoryTestMode, createSessionStore, createVault, writeVaultFile } from '@wallet/core';
+import { VaultLockedError, createMemoryAudit, createMemoryOriginProfiles, createMemoryTestMode, createSessionStore, createVault, writeVaultFile } from '@wallet/core';
 import { describe, expect, it } from 'vitest';
 import { TargetError } from '@wallet/app';
 import { createHandlers } from '@wallet/api';
@@ -610,6 +610,101 @@ describe('저장 로그인 힌트 (FWL-046) — 서버는 주입 여부만 알�
     if (r.ok) throw new Error('should fail');
     expect(r.error.code).toBe('vault_locked');
     expect(await sessionCount(handlers)).toBe(0);
+  });
+});
+
+describe('origin별 기동 조합 기억 (FWL-065)', () => {
+  const ORIGIN = 'https://bot.example';
+  /** 기억 저장소를 물린 핸들러 한 벌. openError를 주면 기동 실패 경로를 탄다 */
+  function withMemory(remembered?: { browser: 'chromium' | 'chrome'; headless: boolean }, over: FakeTargetOptions = {}) {
+    const state = fakeTarget(over);
+    const audit = createMemoryAudit();
+    const originProfiles = createMemoryOriginProfiles(
+      remembered ? { [ORIGIN]: { ...remembered, at: '2026-09-13T00:00:00.000Z' } } : {},
+    );
+    const handlers = createHandlers({
+      vault: fakeVault(),
+      sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }),
+      targets: new Map([['browser', state.target]]),
+      audit,
+      originProfiles,
+    });
+    return { handlers, audit, state, originProfiles };
+  }
+
+  it('로그인까지 간 세션의 조합을 기억한다 — 다음 세션은 생략해도 그 조합으로 열린다', async () => {
+    const { handlers, originProfiles, state } = withMemory();
+    const r = await handlers.session_begin(caller, { origin: ORIGIN, browser: 'chrome', headless: false });
+    if (!r.ok) throw new Error(r.error.code);
+    expect(originProfiles.get(ORIGIN)).toBeUndefined(); // 아직 로그인을 단언하지 않았다
+    await handlers.session_end(caller, r.sessionId, true);
+    expect(originProfiles.get(ORIGIN)).toMatchObject({ browser: 'chrome', headless: false });
+
+    const again = await handlers.session_begin(caller, { origin: ORIGIN });
+    expect(again.ok).toBe(true);
+    expect(state.opened[1]).toEqual({ origin: ORIGIN, kind: 'browser', browser: 'chrome', headless: false });
+  });
+
+  it('loggedIn 없이 끝난 세션은 아무것도 가르치지 않는다 — 차단은 정상 종료로 도착한다', async () => {
+    const { handlers, originProfiles } = withMemory();
+    const r = await handlers.session_begin(caller, { origin: ORIGIN, browser: 'chromium', headless: true });
+    if (!r.ok) throw new Error(r.error.code);
+    await handlers.session_end(caller, r.sessionId);
+    expect(originProfiles.get(ORIGIN)).toBeUndefined();
+  });
+
+  it('호출자가 고르지 않은 기본값은 배우지 않는다 — keepalive가 틀린 조합을 굳히는 걸 막는다', async () => {
+    const { handlers, originProfiles } = withMemory();
+    const r = await handlers.session_begin(caller, { origin: ORIGIN }); // 조합 생략 → chromium/headless 기본값
+    if (!r.ok) throw new Error(r.error.code);
+    await handlers.session_end(caller, r.sessionId, true);
+    expect(originProfiles.get(ORIGIN)).toBeUndefined();
+  });
+
+  it('기억과 다른 조합을 지목하면 열지 않고 거절한다 — 통했던 조합을 알려 준다', async () => {
+    const { handlers, audit, state } = withMemory({ browser: 'chrome', headless: false });
+    const r = await handlers.session_begin(caller, { origin: ORIGIN, browser: 'chromium', headless: true });
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('profile_mismatch');
+    expect(r.error.retriable).toBe(false);
+    expect(r.error.message).toContain('chrome/headful');
+    expect(state.opened).toHaveLength(0); // 브라우저를 띄우지도 않았다
+    expect(audit.records.find((x) => x.evt === 'action_failed')).toMatchObject({
+      sid: null, // 세션을 열기 전에 막았다
+      kind: 'session_begin',
+      code: 'profile_mismatch',
+      origin: ORIGIN,
+      remembered: 'chrome/headful',
+      profile: { kind: 'browser', browser: 'chromium', headless: true },
+    });
+  });
+
+  it('기억과 같은 조합을 지목하는 건 통과한다', async () => {
+    const { handlers, state } = withMemory({ browser: 'chrome', headless: false });
+    const r = await handlers.session_begin(caller, { origin: ORIGIN, browser: 'chrome', headless: false });
+    expect(r.ok).toBe(true);
+    expect(state.opened[0]).toEqual({ origin: ORIGIN, kind: 'browser', browser: 'chrome', headless: false });
+  });
+
+  it('기억한 조합이 아예 못 뜨면 기억을 버린다 — 크롬이 사라져도 영구히 막히지 않는다', async () => {
+    const { handlers, originProfiles } = withMemory(
+      { browser: 'chrome', headless: false },
+      { openError: new TargetError('browser_unavailable', 'not_installed') },
+    );
+    const r = await handlers.session_begin(caller, { origin: ORIGIN });
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('browser_unavailable');
+    expect(originProfiles.get(ORIGIN)).toBeUndefined();
+  });
+
+  it('기억 저장소가 없으면 검사도 기억도 없다 — 호출자 말을 그대로 따른다 (기존 동작)', async () => {
+    const { handlers, state } = setup();
+    const r = await handlers.session_begin(caller, { origin: 'https://shop.com', browser: 'chrome', headless: false });
+    if (!r.ok) throw new Error(r.error.code);
+    await handlers.session_end(caller, r.sessionId, true);
+    const second = await handlers.session_begin(caller, { origin: 'https://shop.com', browser: 'chromium', headless: true });
+    expect(second.ok).toBe(true);
+    expect(state.opened[1]).toMatchObject({ browser: 'chromium', headless: true });
   });
 });
 

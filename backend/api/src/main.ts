@@ -22,7 +22,7 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPlaywrightTarget, createBrowserPool, hasStorageState, mergeStorageStates, persistStorageStates } from '@wallet/app';
-import { VaultLockedError, consumeUnlockHandoff, createAudit, createSessionStore, createTestMode, createVault, defaultDataDir } from '@wallet/core';
+import { VaultLockedError, consumeUnlockHandoff, createAudit, createOriginProfiles, createSessionStore, createTestMode, createVault, defaultDataDir } from '@wallet/core';
 import { parseDuration } from '@wallet/core';
 import { createAdminVerifier } from './auth-admin.js';
 import { createIntrospectionVerifier } from './auth.js';
@@ -89,6 +89,8 @@ function main(): void {
   const unlockTtlMs = parseDuration(process.env['WALLET_UNLOCK_TTL'] ?? '15m', 'WALLET_UNLOCK_TTL');
   const vault = createVault(vaultFile, { ttlMs: unlockTtlMs });
   const audit = createAudit(join(dataDir, 'audit.jsonl'));
+  // 재시작 경계선 (FWL-065) — 이 줄 위에서 끊긴 세션은 버려진 게 아니라 여기서 죽은 것이다
+  audit.append({ evt: 'server_start', sid: null, client: null, traceId: null, origin: null, pid: process.pid });
   // unlock 인계 (FWL-042): 직전 프로세스가 남긴 파일이 있으면 같은 만료 시각으로 이어받는다. 파일은 읽는 즉시 지워진다
   const handoffFile = join(dataDir, 'unlock-handoff.dpapi');
   const handoff = consumeUnlockHandoff(handoffFile);
@@ -145,7 +147,9 @@ function main(): void {
       }, origin);
     },
   });
-  const handlers = createHandlers({ vault, sessions, targets: new Map([['browser', target]]), audit, grantKey, testMode, handoffFile });
+  // origin별로 로그인까지 갔던 기동 조합 (FWL-065) — 호출자가 조합을 틀리면 세션을 열기 전에 막는다
+  const originProfiles = createOriginProfiles(join(dataDir, 'origins.json'));
+  const handlers = createHandlers({ vault, sessions, targets: new Map([['browser', target]]), audit, grantKey, testMode, handoffFile, originProfiles });
 
   // 로컬 모드에선 authenticate와 /login이 먼저 끊어 이 자리에 닿지 않는다 (FWL-053)
   const notUsedInLocalMode = (): never => {
