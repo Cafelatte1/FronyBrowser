@@ -25,7 +25,7 @@ export type ScrubHit = { readonly key: string; readonly count: number };
 
 export type ScrubResult<T> = {
   readonly value: T;
-  /** 0이 정상. 0이 아니면 구조적 필터가 못 막은 경로가 있다는 신호다 */
+  /** 히트는 정상이다 — 사이트가 화면에 그린 사용자 정보를 이 단계가 상시로 잡는다 (egress.ts 주석) */
   readonly hits: ReadonlyArray<ScrubHit>;
 };
 

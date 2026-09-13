@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import type { TestMode } from '@wallet/core';
 import { VaultLockedError, createMemoryAudit, createMemoryTestMode, createSessionStore, createVault, writeVaultFile } from '@wallet/core';
 import { describe, expect, it } from 'vitest';
+import { TargetError } from '@wallet/app';
 import { createHandlers } from '@wallet/api';
 import { fakeCipher, fakeTarget, fakeVault } from '../../helpers/fakes.js';
 import { freshGrant } from '../../helpers/fakes.js';
@@ -384,7 +385,7 @@ describe('세션 TTL', () => {
     const { handlers, audit, state } = setup({}, () => t);
     const sid = await begin(handlers);
     t += 50_000;
-    expect((await handlers.snapshot(caller, sid)).ok).toBe(true); // 접근 → 연장
+    expect((await handlers.page_tree(caller, sid)).ok).toBe(true); // 접근 → 연장
     t += 50_000; // 최초 발급 기준으론 만료, 연장 기준으론 아직
     await handlers.sweep_expired();
     expect(state.closed).toHaveLength(0);
@@ -456,7 +457,7 @@ describe('세션 경계', () => {
   it('다른 클라이언트의 세션 id로는 접근할 수 없다', async () => {
     const { handlers } = setup();
     const sid = await begin(handlers);
-    const r = await handlers.snapshot({ client: 'other-device' }, sid);
+    const r = await handlers.page_tree({ client: 'other-device' }, sid);
     if (r.ok) throw new Error('should fail');
     expect(r.error.code).toBe('session_not_found');
   });
@@ -542,7 +543,7 @@ describe('세션 = origin 하나 (FWL-017)', () => {
     expect(stub.opened[0]).toEqual({ origin: 'https://stub.example', kind: 'stub' });
     expect(browser.opened).toHaveLength(0);
     const sid = r.sessionId as SessionId;
-    expect((await handlers.snapshot(caller, sid)).ok).toBe(true);
+    expect((await handlers.page_tree(caller, sid)).ok).toBe(true);
     expect((await handlers.click(caller, sid, '1:e1' as Ref)).ok).toBe(true);
     expect(browser.intents).toHaveLength(0);
     expect(stub.intents.length).toBeGreaterThan(0);
@@ -643,11 +644,26 @@ describe('감사 로그로 세션 재구성 (FWL-030)', () => {
     });
   });
 
-  it('snapshot은 세대와 페이지 수를 남긴다 — 트리 본문은 남기지 않는다', async () => {
+  it('세션 시작 실패도 남는다 — 프로필과 원인 분류까지, 응답에는 원인이 안 나간다 (FWL-063)', async () => {
+    const { handlers, audit } = setup({ openError: new TargetError('browser_unavailable', 'not_installed') });
+    const r = await handlers.session_begin(caller, { origin: 'https://shop.com', browser: 'chrome', headless: false });
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('browser_unavailable');
+    expect(r.error.message).toBe('browser_unavailable'); // 호스트 사정은 호출자에게 알리지 않는다
+    const log = audit.records.find((x) => x.evt === 'action_failed' && (x as { kind?: string }).kind === 'session_begin');
+    expect(log).toMatchObject({
+      code: 'browser_unavailable',
+      reason: 'not_installed', // 운영자는 이걸 보고 Chrome을 고칠지 로그온을 할지 안다
+      origin: 'https://shop.com',
+      profile: { kind: 'browser', browser: 'chrome', headless: false },
+    });
+  });
+
+  it('page_tree는 세대와 페이지 수를 남긴다 — 트리 본문은 남기지 않는다', async () => {
     const { handlers, audit } = setup({ tree: '- textbox "비밀번호" [ref=1:e1]' });
     const sid = await begin(handlers);
-    expect((await handlers.snapshot(caller, sid)).ok).toBe(true);
-    const log = audit.records.find((x) => x.evt === 'snapshot');
+    expect((await handlers.page_tree(caller, sid)).ok).toBe(true);
+    const log = audit.records.find((x) => x.evt === 'page_tree');
     expect(log).toMatchObject({ sid, generation: 1, pages: 1 });
     expect(JSON.stringify(log)).not.toContain('비밀번호'); // 규칙 5
   });

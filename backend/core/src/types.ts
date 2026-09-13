@@ -40,6 +40,21 @@ export type SnapshotOptions = {
   readonly raw?: boolean;
 };
 
+/**
+ * 현재 화면 한 장 (FWL-062).
+ *
+ * 입력창은 마스크 박스로 덮인 채 찍힌다 — 규칙 1의 경계선을 픽셀에도 그은 것이다.
+ * 사이트가 **화면에 표시한** 값(배송지 이름·전화·주소)은 가려지지 않는다. 그건 스크러버의 영역인데,
+ * PNG는 사후 치환이 불가능하다 (규칙 3 예외 — CLAUDE.md 참조).
+ */
+export type PageImage = {
+  readonly png: Uint8Array;
+  readonly width: number;
+  readonly height: number;
+  /** 덮은 입력창 수. 마스킹이 실제로 돌았다는 유일한 증거라 감사에 남긴다 */
+  readonly masked: number;
+};
+
 /** 컨텍스트에 열린 페이지 하나 (FWL-043). url은 origin + 경로까지 — 쿼리스트링에 토큰이 실릴 수 있다 */
 export type PageInfo = {
   readonly index: number;

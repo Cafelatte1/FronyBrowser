@@ -24,7 +24,7 @@ import type {
   Session,
 } from '@wallet/core';
 import { KeyNotFoundError, VaultLockedError, fail, failFromUnknown, findKeys, markGrantUsed, resolve, verifyPayGrant, writeUnlockHandoff } from '@wallet/core';
-import type { BrowserProfile, Cipher, KeypadSpec, LaunchProfile, Ref, SnapshotOptions, TargetKind, TestMode } from '@wallet/core';
+import type { BrowserProfile, Cipher, KeypadSpec, LaunchProfile, PageImage, Ref, SnapshotOptions, TargetKind, TestMode } from '@wallet/core';
 import { isBrowserProfile } from '@wallet/core';
 import { TargetError } from '@wallet/app';
 
@@ -135,7 +135,20 @@ export function createHandlers(deps: HandlerDeps) {
         opened = await target.open(begun.session.id, { origin: req.origin, ...profile });
       } catch (e) {
         sessions.end(begun.session.id, 'error');
-        return toFailure(e);
+        const f = toFailure(e);
+        // 세션 시작 실패도 남긴다 (FWL-063). 없으면 browser_unavailable의 원인이 어디에도 안 남아
+        // 운영자가 Chrome을 고쳐야 하는지 로그온을 해야 하는지 알 길이 없다.
+        // reason은 분류값이고 예외 메시지가 아니다 (규칙 5) — profile과 짝지어야 뜻이 산다
+        audit.append({
+          evt: 'action_failed',
+          ...baseAudit(begun.session, caller),
+          origin: req.origin,
+          kind: 'session_begin',
+          code: f.error.code,
+          profile,
+          reason: e instanceof TargetError ? (e.reason ?? null) : null,
+        });
+        return f;
       }
       audit.append({
         evt: 'session_begin',
@@ -223,7 +236,7 @@ export function createHandlers(deps: HandlerDeps) {
       }
     },
 
-    async snapshot(caller: Caller, id: SessionId, opts: SnapshotOptions = {}): Promise<Result<{ snapshot: SnapshotBody }>> {
+    async page_tree(caller: Caller, id: SessionId, opts: SnapshotOptions = {}): Promise<Result<{ snapshot: SnapshotBody }>> {
       const found = session(caller, id);
       if (!found.ok) return found;
       const target = targetOf(found.session);
@@ -231,7 +244,7 @@ export function createHandlers(deps: HandlerDeps) {
         const snap = await target.snapshot(id, opts);
         // 스냅샷을 언제 읽었는지가 남아야 나중에 세션을 재구성할 수 있다 (FWL-030). 트리 본문은 싣지 않는다
         audit.append({
-          evt: 'snapshot',
+          evt: 'page_tree',
           ...baseAudit(found.session, caller),
           origin: null,
           generation: snap.gen,
@@ -246,9 +259,37 @@ export function createHandlers(deps: HandlerDeps) {
           evt: 'action_failed',
           ...baseAudit(found.session, caller),
           origin: null,
-          kind: 'snapshot',
+          kind: 'page_tree',
           code: f.error.code,
         });
+        return f;
+      }
+    },
+
+    /**
+     * 현재 화면 한 장 (FWL-062). 입력창은 덮인 채로 찍힌다 (규칙 1).
+     * 반환에 PNG 바이트가 실리지만, 그건 `scrub()`을 통과할 수 없다 — 입구(mcp/server.ts)가
+     * 메타데이터만 스크러버에 넣고 바이트는 별도 콘텐츠 블록으로 내보낸다 (규칙 3 예외).
+     */
+    async page_image(caller: Caller, id: SessionId): Promise<Result<{ image: PageImage }>> {
+      const found = session(caller, id);
+      if (!found.ok) return found;
+      const target = targetOf(found.session);
+      try {
+        const image = await target.image(id);
+        // 마스킹이 돌았다는 증거는 masked 수뿐이다 — 이미지 자체는 절대 남기지 않는다 (규칙 5)
+        audit.append({
+          evt: 'page_image',
+          ...baseAudit(found.session, caller),
+          origin: null,
+          w: image.width,
+          h: image.height,
+          masked: image.masked,
+        });
+        return { ok: true, image };
+      } catch (e) {
+        const f = toFailure(e);
+        audit.append({ evt: 'action_failed', ...baseAudit(found.session, caller), origin: null, kind: 'page_image', code: f.error.code });
         return f;
       }
     },
@@ -476,6 +517,22 @@ export function createHandlers(deps: HandlerDeps) {
       } catch (e) {
         const f = toFailure(e);
         audit.append({ evt: 'action_failed', ...baseAudit(found.session, caller), origin: null, kind: 'select', ref: String(ref), code: f.error.code });
+        return f;
+      }
+    },
+
+    /** 요소가 보이도록 스크롤 (FWL-061). 세대를 올리지 않으므로 호출 전후의 ref가 모두 유효하다 */
+    async scroll(caller: Caller, id: SessionId, ref: Ref): Promise<Result<{ url: string }>> {
+      const found = session(caller, id);
+      if (!found.ok) return found;
+      const target = targetOf(found.session);
+      try {
+        const r = await target.act(id, { kind: 'scroll', ref });
+        audit.append({ evt: 'scroll', ...baseAudit(found.session, caller), origin: null, ref: String(ref), role: r.role ?? null });
+        return { ok: true, url: r.url };
+      } catch (e) {
+        const f = toFailure(e);
+        audit.append({ evt: 'action_failed', ...baseAudit(found.session, caller), origin: null, kind: 'scroll', ref: String(ref), code: f.error.code });
         return f;
       }
     },

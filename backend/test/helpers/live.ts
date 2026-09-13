@@ -45,7 +45,7 @@ export async function probeOrigin(env: LiveEnv, p: OriginProbe): Promise<void> {
     try {
       await s.call('navigate', { sessionId: sid, url: `${p.origin}/` });
       await new Promise((r) => setTimeout(r, 4000));
-      const home = await s.call<{ snapshot: { tree: string } }>('snapshot', { sessionId: sid });
+      const home = await s.call<{ snapshot: { tree: string } }>('page_tree', { sessionId: sid });
       expect(home.snapshot.tree).not.toContain('Access Denied');
       expect(
         p.loggedInMarkers.some((m) => home.snapshot.tree.includes(m)),
@@ -55,7 +55,7 @@ export async function probeOrigin(env: LiveEnv, p: OriginProbe): Promise<void> {
       const nav = await s.call<{ ok: boolean }>('navigate', { sessionId: sid, url: p.searchUrl });
       expect(nav.ok).toBe(true);
       await new Promise((r) => setTimeout(r, 5000));
-      const search = await s.call<{ snapshot: { tree: string } }>('snapshot', { sessionId: sid });
+      const search = await s.call<{ snapshot: { tree: string } }>('page_tree', { sessionId: sid });
       expect(search.snapshot.tree).not.toContain('Access Denied');
       expect(search.snapshot.tree).toContain(p.searchMarker);
 

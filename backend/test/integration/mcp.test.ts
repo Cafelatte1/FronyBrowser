@@ -104,7 +104,7 @@ describe('MCP 입구', () => {
   it('페이지가 값을 본문에 되비춰도 egress가 [REDACTED:key]로 가리고 scrub_hit을 남긴다', async () => {
     const s = await connect('frony_valid');
     const begun = await s.call<{ sessionId: string }>('session_begin', { origin: 'https://shop.com' });
-    const snap = await s.text('snapshot', { sessionId: begun.sessionId });
+    const snap = await s.text('page_tree', { sessionId: begun.sessionId });
     expect(snap).not.toContain('010-1234-5678'); // variants 하이픈 변형까지 매칭
     expect(snap).toContain('[REDACTED:profile.personal.phone]');
     expect(audit.records.some((r) => r.evt === 'scrub_hit' && r.key === 'profile.personal.phone')).toBe(true);
