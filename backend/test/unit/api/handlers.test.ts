@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import type { TestMode } from '@wallet/core';
 import { VaultLockedError, createMemoryAudit, createMemoryTestMode, createSessionStore, createVault, writeVaultFile } from '@wallet/core';
 import { describe, expect, it } from 'vitest';
+import { TargetError } from '@wallet/app';
 import { createHandlers } from '@wallet/api';
 import { fakeCipher, fakeTarget, fakeVault } from '../../helpers/fakes.js';
 import { freshGrant } from '../../helpers/fakes.js';
@@ -640,6 +641,21 @@ describe('감사 로그로 세션 재구성 (FWL-030)', () => {
       kind: 'navigate',
       code: 'navigation_failed',
       origin: 'https://shop.com',
+    });
+  });
+
+  it('세션 시작 실패도 남는다 — 프로필과 원인 분류까지, 응답에는 원인이 안 나간다 (FWL-063)', async () => {
+    const { handlers, audit } = setup({ openError: new TargetError('browser_unavailable', 'not_installed') });
+    const r = await handlers.session_begin(caller, { origin: 'https://shop.com', browser: 'chrome', headless: false });
+    if (r.ok) throw new Error('should fail');
+    expect(r.error.code).toBe('browser_unavailable');
+    expect(r.error.message).toBe('browser_unavailable'); // 호스트 사정은 호출자에게 알리지 않는다
+    const log = audit.records.find((x) => x.evt === 'action_failed' && (x as { kind?: string }).kind === 'session_begin');
+    expect(log).toMatchObject({
+      code: 'browser_unavailable',
+      reason: 'not_installed', // 운영자는 이걸 보고 Chrome을 고칠지 로그온을 할지 안다
+      origin: 'https://shop.com',
+      profile: { kind: 'browser', browser: 'chrome', headless: false },
     });
   });
 

@@ -50,8 +50,15 @@ const KR_DESKTOP_PROFILE = {
   extraHTTPHeaders: { 'accept-language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7' },
 };
 
+/**
+ * 프로필을 못 띄운 이유 (FWL-063). 호출자에게는 안 나간다 — 에이전트가 고칠 수 있는 게 아니다.
+ * 운영자가 보는 감사 로그에만 남고, 프로필(browser·headless)과 짝지어야 뜻이 산다:
+ * `launch_failed` + headful이면 데스크톱 세션이 없다는 뜻이다.
+ */
+export type LaunchFailure = 'not_installed' | 'launch_failed';
+
 export class BrowserUnavailableError extends Error {
-  constructor(readonly profile: BrowserLaunchProfile) {
+  constructor(readonly profile: BrowserLaunchProfile, readonly reason: LaunchFailure = 'launch_failed') {
     super(`browser profile unavailable: ${profileKey(profile)}`);
   }
 }
@@ -106,8 +113,14 @@ export function createBrowserPool(opts: BrowserPoolOptions = {}): BrowserPool {
       });
       browsers.set(key, b);
       return b;
-    } catch {
-      throw new BrowserUnavailableError(profile);
+    } catch (e) {
+      // 메시지에는 실행 파일 경로가 들어 있다 — 분류만 하고 메시지는 버린다 (규칙 5).
+      // 두 문구는 실측으로 확인했다 (2026-09-13): 채널 미설치는 "is not found at",
+      // 실행 파일 부재는 "executable doesn't exist at". 나머지는 launch_failed다 —
+      // 데스크톱 세션 없이 headful을 띄우려 한 경우가 여기 들어오고, 프로필이 그걸 말해 준다
+      const msg = e instanceof Error ? e.message : '';
+      const reason: LaunchFailure = /is not found at|executable doesn't exist/i.test(msg) ? 'not_installed' : 'launch_failed';
+      throw new BrowserUnavailableError(profile, reason);
     }
   }
 

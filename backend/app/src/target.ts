@@ -9,14 +9,15 @@ import type { ActionResult, ActionTarget, ErrorCode, Intent, PageImage, Ref, Saf
 import { KeypadUnresolvedError, resolveKeypadSprite, isBrowserProfile } from '@wallet/core';
 import type { ElementHandle, Page } from 'patchright';
 import { BrowserUnavailableError } from './context.js';
-import type { BrowserPool, SessionBrowser, StorageState } from './context.js';
+import type { BrowserPool, LaunchFailure, SessionBrowser, StorageState } from './context.js';
 import { originOfHandle } from './frames.js';
 import type { RefEntry, RefTable } from './refs.js';
 import { createRefTable } from './refs.js';
 import { buildSnapshot, FIELD_SELECTOR } from './snapshot.js';
 
 export class TargetError extends Error {
-  constructor(readonly code: ErrorCode) {
+  /** reason은 분류값이지 메시지가 아니다 (FWL-063) — 예외 메시지는 어디에도 싣지 않는다 (규칙 5) */
+  constructor(readonly code: ErrorCode, readonly reason?: LaunchFailure) {
     super(code); // 원인 예외를 message에 싣지 않는다
   }
 }
@@ -113,7 +114,9 @@ export function createPlaywrightTarget(pool: BrowserPool, opts: PlaywrightTarget
       try {
         browser = await pool.open(sessionId, storageState, profile);
       } catch (e) {
-        throw new TargetError(e instanceof BrowserUnavailableError ? 'browser_unavailable' : 'navigation_failed');
+        // 원인 분류는 여기서만 실려 나간다 — 응답에는 안 붙고 핸들러가 감사에만 남긴다 (FWL-063)
+        if (e instanceof BrowserUnavailableError) throw new TargetError('browser_unavailable', e.reason);
+        throw new TargetError('navigation_failed');
       }
       // 새 페이지(새 탭·팝업)가 열리면 현재 페이지를 그것으로 바꾼다. 옛 ref는 옛 페이지 것이라 세대를 올려 stale_ref로 만든다.
       // 이전 페이지는 닫지 않는다 — status().pages 목록으로 드러나고, 광고 팝업이면 switchPage로 돌아온다

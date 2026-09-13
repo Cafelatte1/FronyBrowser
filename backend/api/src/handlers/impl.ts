@@ -135,7 +135,20 @@ export function createHandlers(deps: HandlerDeps) {
         opened = await target.open(begun.session.id, { origin: req.origin, ...profile });
       } catch (e) {
         sessions.end(begun.session.id, 'error');
-        return toFailure(e);
+        const f = toFailure(e);
+        // 세션 시작 실패도 남긴다 (FWL-063). 없으면 browser_unavailable의 원인이 어디에도 안 남아
+        // 운영자가 Chrome을 고쳐야 하는지 로그온을 해야 하는지 알 길이 없다.
+        // reason은 분류값이고 예외 메시지가 아니다 (규칙 5) — profile과 짝지어야 뜻이 산다
+        audit.append({
+          evt: 'action_failed',
+          ...baseAudit(begun.session, caller),
+          origin: req.origin,
+          kind: 'session_begin',
+          code: f.error.code,
+          profile,
+          reason: e instanceof TargetError ? (e.reason ?? null) : null,
+        });
+        return f;
       }
       audit.append({
         evt: 'session_begin',
