@@ -26,7 +26,7 @@ import type {
 import { KeyNotFoundError, VaultLockedError, fail, failFromUnknown, findKeys, markGrantUsed, resolve, verifyPayGrant, writeUnlockHandoff } from '@wallet/core';
 import type { BrowserProfile, Cipher, KeypadSpec, LaunchProfile, OriginProfiles, PageImage, Ref, SnapshotOptions, TargetKind, TestMode } from '@wallet/core';
 import { isBrowserProfile } from '@wallet/core';
-import { TargetError } from '@wallet/app';
+import { TargetError, baseDomain } from '@wallet/app';
 
 export type HandlerDeps = {
   readonly vault: Vault;
@@ -66,6 +66,13 @@ function isExactOrigin(s: string): boolean {
 }
 
 const BROWSER_PROFILES: ReadonlyArray<BrowserProfile> = ['chromium', 'chrome'];
+
+/** 같은 사이트인가 — 스킴이 같고 등록 가능 도메인이 같다. 서브도메인은 자유다 (FWL-069) */
+function sameSite(a: string, b: string): boolean {
+  const ua = new URL(a);
+  const ub = new URL(b);
+  return ua.protocol === ub.protocol && baseDomain(ua.hostname) === baseDomain(ub.hostname);
+}
 
 export function createHandlers(deps: HandlerDeps) {
   const { vault, sessions, targets, audit } = deps;
@@ -331,9 +338,12 @@ export function createHandlers(deps: HandlerDeps) {
         audit.append({ evt: 'action_failed', ...baseAudit(found.session, caller), origin: null, kind: 'navigate', code: 'navigation_failed' });
         return fail('navigation_failed', 'malformed url');
       }
-      // 에이전트의 navigate는 타겟 origin 안에서만. 페이지가 스스로 옮기는 리디렉트
-      // (PG·소셜 로그인·카드사 인증)는 이 핸들러를 거치지 않으므로 그대로 흐른다 (FWL-017)
-      if (origin !== found.session.origin) {
+      // 에이전트의 navigate는 세션의 사이트 안에서만 — 정확한 origin이 아니라 등록 가능 도메인으로 본다 (FWL-069).
+      // 상품·검색·주문이 서브도메인으로 갈라진 사이트(실측 2026-09-14: 서점 하나가 www/product/search/store)에서
+      // origin 비교는 클릭으로는 되는 이동을 URL로는 막았다. 검사의 목적은 호출자가 딴 사이트로 새는 걸 잡는 것이지
+      // 서브도메인 격리가 아니다. 리스 단위(FWL-017)는 그대로 origin이다. 페이지가 스스로 옮기는 리디렉트
+      // (PG·소셜 로그인·카드사 인증)는 이 핸들러를 거치지 않으므로 그대로 흐른다
+      if (!sameSite(origin, found.session.origin)) {
         audit.append({ evt: 'policy_denied', ...baseAudit(found.session, caller), origin, rule: 'session_origin' });
         return fail('origin_not_permitted', 'session is bound to another origin');
       }
