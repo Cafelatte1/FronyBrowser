@@ -40,12 +40,15 @@ $env:WALLET_LOCAL = "1"
 npm run -w backend/api dev
 ```
 
-For a server other devices reach, run the normal mode: it verifies every bearer token
-through a FronyAuth introspection endpoint (`FRONY_SERVICE_KEY`, `FRONY_AUTH_URL`,
-`FRONY_AUTH_ISSUER`). This service stores no credential of its own; FronyAuth issues,
-verifies and revokes every key, and owns that contract.
+For a server other devices reach, run the normal mode. It authenticates every call with a
+bearer token, resolved in one of two ways: a static list in the launcher environment
+(`WALLET_KEYS="agent:<token>,admin-box:<token>"`), or a FronyAuth introspection endpoint
+(`FRONY_SERVICE_KEY`, `FRONY_AUTH_URL`, `FRONY_AUTH_ISSUER`), where FronyAuth issues,
+verifies and revokes every key and owns that contract. Either way this service stores no
+credential of its own beyond what the launcher hands it. Details in
+[docs/operations.md](docs/operations.md#static-keys).
 
-Register it in an MCP client with a device key issued by FronyAuth:
+Register it in an MCP client with one of those tokens:
 
 ```powershell
 claude mcp add --transport http FronyBrowser http://<server>:9420/mcp --header "Authorization: Bearer <device key>"
@@ -76,5 +79,5 @@ not exist. Read it before adding one.
 
 `docs/` holds only what the code cannot answer: [operations.md](docs/operations.md) (deploying and
 running the home server) and [pay-grant.md](docs/pay-grant.md) (the token contract the issuing
-service must match). For anything about this codebase, read the code. Authentication lives in
-FronyAuth, which owns both the implementation and its documentation.
+service must match). For anything about this codebase, read the code. FronyAuth-backed
+authentication lives in FronyAuth, which owns both the implementation and its documentation.

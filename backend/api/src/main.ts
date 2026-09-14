@@ -31,6 +31,7 @@ import { createHandlers } from './handlers/impl.js';
 import { createVaultAdmin } from './handlers/vault-admin.js';
 import { createGuiSessions } from './http/gui-session.js';
 import { assertBindable, createHttpServer } from './http/server.js';
+import { createStaticAdminVerifier, createStaticVerifier, parseStaticKeys } from './auth-static.js';
 
 function tailscaleIp(): string | null {
   try {
@@ -42,7 +43,7 @@ function tailscaleIp(): string | null {
   }
 }
 
-/** FronyAuth 연동에 필요한 셋 — 로컬 모드가 아니면 하나라도 없을 때 기동을 거부한다 */
+/** FronyAuth 연동에 필요한 셋 — 로컬 모드도 정적 키 모드도 아니면 하나라도 없을 때 기동을 거부한다 */
 function requireAuthEnv(): { serviceKey: string; authUrl: string; authIssuer: string } {
   const serviceKey = process.env['FRONY_SERVICE_KEY'];
   if (!serviceKey) {
@@ -65,7 +66,22 @@ function requireAuthEnv(): { serviceKey: string; authUrl: string; authIssuer: st
 function main(): void {
   // 로컬 모드 (FWL-053): 한 사람이 한 머신에서 쓴다 — FronyAuth 없이 루프백에만 리슨한다
   const local = process.env['WALLET_LOCAL'] === '1';
-  const auth = local ? null : requireAuthEnv();
+  // 정적 키 모드 (FWL-074): FronyAuth가 없는 서버는 WALLET_KEYS의 목록으로 인증한다. 둘을 같이 켜면 어느 쪽이 답인지 모르니 거부한다
+  const staticKeys = ((): ReturnType<typeof parseStaticKeys> | null => {
+    const raw = process.env['WALLET_KEYS'];
+    if (raw === undefined || local) return null;
+    if (process.env['FRONY_AUTH_URL'] !== undefined || process.env['WALLET_PUBLIC_URL'] !== undefined) {
+      console.error('WALLET_KEYS cannot be combined with FRONY_AUTH_URL or WALLET_PUBLIC_URL — static keys have no OAuth issuer for a connector; choose one mode');
+      process.exit(1);
+    }
+    try {
+      return parseStaticKeys(raw);
+    } catch (e) {
+      console.error(e instanceof Error ? e.message : 'WALLET_KEYS is malformed');
+      process.exit(1);
+    }
+  })();
+  const auth = local || staticKeys ? null : requireAuthEnv();
 
   const dataDir = defaultDataDir();
   const bind = local ? process.env['WALLET_BIND'] ?? '127.0.0.1' : process.env['WALLET_BIND'] ?? tailscaleIp() ?? '127.0.0.1';
@@ -159,15 +175,27 @@ function main(): void {
   const notUsedInLocalMode = (): never => {
     throw new Error('not used in local mode');
   };
-  const verify = auth ? createIntrospectionVerifier({ url: auth.authUrl, serviceKey: auth.serviceKey }) : notUsedInLocalMode;
-  const verifyAdmin = auth ? createAdminVerifier({ url: new URL('/admin/verify', auth.authUrl).toString(), serviceKey: auth.serviceKey }) : notUsedInLocalMode;
-
   const adminClients = local
     ? ['local']
     : (process.env['WALLET_ADMIN_CLIENTS'] ?? '')
       .split(',')
       .map((s) => s.trim())
       .filter((s) => s.length > 0);
+
+  const verify = auth
+    ? createIntrospectionVerifier({ url: auth.authUrl, serviceKey: auth.serviceKey })
+    : staticKeys
+      ? createStaticVerifier(staticKeys)
+      : notUsedInLocalMode;
+  const verifyAdmin = auth
+    ? createAdminVerifier({ url: new URL('/admin/verify', auth.authUrl).toString(), serviceKey: auth.serviceKey })
+    : staticKeys
+      ? createStaticAdminVerifier(staticKeys, adminClients)
+      : notUsedInLocalMode;
+  if (staticKeys) {
+    console.log(`auth: static keys (${staticKeys.length}) from WALLET_KEYS — key:${staticKeys.map((k) => k.name).join(', key:')}`);
+    if (adminClients.length === 0) console.warn('WALLET_ADMIN_CLIENTS is empty — the console login and wallet unlock will refuse every key');
+  }
 
   const vaultAdmin = createVaultAdmin({ vaultFile, sessionsDir, vault, audit });
   const staticDir = fileURLToPath(new URL('../../../frontend/dist', import.meta.url));
