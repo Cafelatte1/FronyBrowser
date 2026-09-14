@@ -75,7 +75,8 @@ const fakeFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit
     return jsonRes(200, { ok: true, keys: [...registered.values()] });
   }
   if (path === '/vault/set') {
-    if (body['passphrase'] !== MASTER) return jsonRes(403, { ok: false, error: { code: 'vault_locked', message: 'wrong passphrase' } });
+    // 실제 서버와 같다 (FWL-068): 열린 금고의 메모리 패스프레이즈로 쓴다 — 요청에 비밀번호가 실리지 않는다
+    if (vaultLocked) return jsonRes(403, { ok: false, error: { code: 'vault_locked', message: 'unlock required' } });
     const items = body['entries'] as Array<{ key: string; type: string; value: string; grant?: boolean; label?: string }>;
     for (const e of items) {
       registered.set(e.key, { name: e.key, type: e.type, len: e.value.length, grant: e.grant === true, label: e.label ?? '' });
@@ -119,11 +120,9 @@ function type(el: HTMLInputElement, value: string): void {
   el.dispatchEvent(new Event('input'));
 }
 
-/** 저장 대화상자를 열고 마스터 비밀번호로 확인한다 */
-async function confirmSave(pass = MASTER): Promise<void> {
+/** 저장 — 금고가 열려 있으면 대화상자 없이 바로 나간다 (FWL-068) */
+async function save(): Promise<void> {
   $('btn-save').click();
-  type($<HTMLInputElement>('dlg-pass'), pass);
-  $('dlg-submit').click();
   await settle();
 }
 
@@ -230,7 +229,7 @@ describe('내비와 행', () => {
 });
 
 describe('그룹 저장', () => {
-  it('형식이 틀린 항목이 하나라도 있으면 비밀번호도 묻지 않는다', async () => {
+  it('형식이 틀린 항목이 하나라도 있으면 아무것도 보내지 않는다', async () => {
     type(inputFor('profile.personal.phone'), '010-1234-5678');
     type(inputFor('profile.personal.email'), 'not-an-email');
     expect($('entered').textContent).toContain('2 fields');
@@ -249,9 +248,10 @@ describe('그룹 저장', () => {
     type(inputFor('card.personal.expiry'), '12/27'); // 다른 그룹 — 이번 저장에 실리지 않는다
     nav('personal').click();
     calls.length = 0;
-    await confirmSave();
+    await save();
+    expect($('dialog').hidden).toBe(true); // 비밀번호를 다시 묻지 않는다 — 서버가 열린 금고의 패스프레이즈로 쓴다
     expect(sets()).toHaveLength(1);
-    expect(sets()[0]?.body['passphrase']).toBe(MASTER);
+    expect(sets()[0]?.body['passphrase']).toBeUndefined();
     const entries = sets()[0]?.body['entries'] as Array<{ key: string; type: string; value: string; grant: boolean; label: string }>;
     expect(entries.map((e) => e.key).sort()).toEqual(['profile.personal.email', 'profile.personal.phone']);
     expect(entries.find((e) => e.key === 'profile.personal.email')).toEqual({ key: 'profile.personal.email', type: 'email', value: 'a@b.co', grant: false, label: 'Email' });
@@ -307,7 +307,7 @@ describe('grant 토글과 키 보류', () => {
     expect(calls.some((c) => c.path === '/vault/grant' && c.body['key'] === 'profile.personal.carrier')).toBe(false);
     type(inputFor('profile.personal.carrier'), 'SKT');
     calls.length = 0;
-    await confirmSave();
+    await save();
     const entries = sets()[0]?.body['entries'] as Array<{ key: string; grant: boolean }>;
     expect(entries).toEqual([{ key: 'profile.personal.carrier', type: 'text', value: 'SKT', grant: true, label: 'Carrier' }]);
   });
@@ -386,7 +386,7 @@ describe('사용자가 만든 그룹', () => {
   it('저장하면 그 줄이 라벨과 함께 나가고 등록으로 바뀐다', async () => {
     type(inputFor('example-shop.payment.pinnumber'), '123456');
     calls.length = 0;
-    await confirmSave();
+    await save();
     const entries = sets()[0]?.body['entries'] as Array<Record<string, unknown>>;
     expect(entries).toEqual([{ key: 'example-shop.payment.pinnumber', type: 'text', value: '123456', grant: false, label: 'Payment PIN' }]);
     expect(row('example-shop.payment.pinnumber').querySelector('.badge')?.textContent).toBe('Registered');

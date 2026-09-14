@@ -16,7 +16,7 @@ type Row = {
   registered: boolean; secret: boolean; field?: FieldDef;
 };
 type VaultState = 'open' | 'locked' | 'missing' | 'offline';
-type Dlg = 'confirm' | 'unlock' | 'extend' | 'group' | 'testOn' | 'testOff' | 'wipe' | 'grantOff';
+type Dlg = 'unlock' | 'extend' | 'group' | 'testOn' | 'testOff' | 'wipe' | 'grantOff';
 
 let existing = new Map<string, KeyInfo>();
 let current = SECTIONS[0]!.id;
@@ -552,18 +552,19 @@ $('btn-save').addEventListener('click', () => {
   if (vault !== 'open') return;
   const pending = enteredRows();
   if (pending.length === 0) return note(false, 'Nothing entered in this group.');
-  // 형식이 틀린 게 하나라도 있으면 비밀번호도 묻지 않는다 — 반쯤 저장된 상태를 만들지 않는다
+  // 형식이 틀린 게 하나라도 있으면 보내지 않는다 — 반쯤 저장된 상태를 만들지 않는다
   const bad = checkFields(pending.filter((r) => r.field).map((r) => ({ field: r.field!, value: valueOf(r.key) })));
   if (bad.length > 0) return note(false, `Nothing was saved. Expected format — ${bad.join(', ')}. The write is all-or-nothing, so fix it and save again.`);
-  openDialog('confirm');
+  // 금고가 열려 있으면 바로 저장한다 (FWL-068) — 서버가 메모리의 패스프레이즈로 쓴다. 다시 묻지 않는다
+  void saveGroup().catch((e: Error) => { note(false, e.message); });
 });
 
-async function saveGroup(passphrase: string): Promise<void> {
+async function saveGroup(): Promise<void> {
   const group = current;
   const pending = enteredRows();
   // 한 요청으로 보낸다 — 서버가 복호화·재암호화를 한 번만 하고, 전부 저장되거나 아무것도 저장되지 않는다
   const entries = pending.map((r) => ({ key: r.key, type: r.type, value: valueOf(r.key), grant: r.grant, label: r.label }));
-  await api('/vault/set', { passphrase, entries });
+  await api('/vault/set', { entries });
   const saved = new Set(entries.map((e) => e.key));
   for (const key of saved) { draft.delete(key); grantDraft.delete(key); }
   const left = (pendingRows.get(group) ?? []).filter((p) => !saved.has(p.key));
@@ -624,16 +625,11 @@ function createGroup(name: string): void {
 function openDialog(kind: Dlg): void {
   dlg = kind;
   const span = ttlSpan();
-  const n = enteredRows().length;
-  const needsPass = kind === 'confirm' || kind === 'unlock' || kind === 'extend';
+  const needsPass = kind === 'unlock' || kind === 'extend';
   let title = '';
   let body = '';
   let action = '';
-  if (kind === 'confirm') {
-    title = 'Master password';
-    body = `Confirms this write. ${n} ${n === 1 ? 'field' : 'fields'} in ${titleOf(current)} will be encrypted and stored — all of them or none.`;
-    action = `Save ${n} ${n === 1 ? 'key' : 'keys'}`;
-  } else if (kind === 'unlock') {
+  if (kind === 'unlock') {
     title = 'Open the vault';
     body = span === null
       ? 'The vault stays open until it locks itself. Agents can fill only while it is open.'
@@ -715,10 +711,9 @@ function submitDialog(): void {
     if (r !== null) void applyGrant(r, false);
     return;
   }
-  const run = kind === 'confirm' ? saveGroup(pass)
-    : kind === 'unlock' || kind === 'extend' ? unlockVault(pass)
-      : kind === 'wipe' ? resetVault()
-        : setTestMode(kind === 'testOn');
+  const run = kind === 'unlock' || kind === 'extend' ? unlockVault(pass)
+    : kind === 'wipe' ? resetVault()
+      : setTestMode(kind === 'testOn');
   void run.then(() => { closeDialog(); }).catch((e: Error) => { dlgError(e.message); });
 }
 
