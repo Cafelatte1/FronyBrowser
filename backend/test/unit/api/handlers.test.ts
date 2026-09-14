@@ -7,8 +7,8 @@ import type { Ref, SessionId } from '@wallet/core';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { TestMode } from '@wallet/core';
-import { VaultLockedError, createMemoryAudit, createMemoryOriginProfiles, createMemoryTestMode, createSessionStore, createVault, writeVaultFile } from '@wallet/core';
+import type { GlyphSet, TestMode } from '@wallet/core';
+import { SPRITE_KEYPAD_GLYPHS, VaultLockedError, createMemoryAudit, createMemoryOriginProfiles, createMemoryTestMode, createSessionStore, createVault, writeVaultFile } from '@wallet/core';
 import { describe, expect, it } from 'vitest';
 import { TargetError } from '@wallet/app';
 import { createHandlers } from '@wallet/api';
@@ -31,7 +31,7 @@ const ENTRIES = {
 const KEYPAD = { digitSelector: "img.kpd[aria-label='{digit}']" };
 const SPRITE = { keySelector: 'a.pad-key', cellSelector: 'span[class^=pad-pos-]', resolver: 'sprite-template' } as const;
 
-function setup(over: FakeTargetOptions = {}, now?: () => number, testMode?: TestMode) {
+function setup(over: FakeTargetOptions = {}, now?: () => number, testMode?: TestMode, keypadTemplates?: (name: string) => GlyphSet | undefined) {
   const state = fakeTarget({ url: 'https://shop.com/checkout', ...over });
   const audit = createMemoryAudit();
   const handlers = createHandlers({
@@ -41,6 +41,7 @@ function setup(over: FakeTargetOptions = {}, now?: () => number, testMode?: Test
     audit,
     grantKey: GRANT_KEY,
     ...(testMode ? { testMode } : {}),
+    ...(keypadTemplates ? { keypadTemplates } : {}),
   });
   return { handlers, audit, state };
 }
@@ -205,6 +206,32 @@ describe('fill — 보안 키패드 (FWL-033)', () => {
     expect((await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.pin}}')).ok).toBe(true);
     expect(state.filled[0]?.value).toBe('739105');
     expect(audit.records.find((x) => x.evt === 'fill')).toMatchObject({ mode: 'text' });
+  });
+
+  it('keypad.template은 서버의 템플릿으로 풀려 인텐트에 실린다; 없는 이름·나쁜 이름은 bad_request (FWL-073)', async () => {
+    const { handlers, audit, state } = setup({}, undefined, undefined, (name) => (name === 'site-a' ? SPRITE_KEYPAD_GLYPHS : undefined));
+    const sid = await begin(handlers);
+    const r = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.sprite}}', undefined, { ...SPRITE, template: 'site-a' });
+    expect(r.ok).toBe(true);
+    expect(state.intents[0]).toMatchObject({ kind: 'keypad_sprite', glyphs: SPRITE_KEYPAD_GLYPHS, value: '4951' });
+    expect(audit.records.find((x) => x.evt === 'fill')).toMatchObject({ template: 'site-a', resolver: 'sprite-template' });
+
+    const missing = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.sprite}}', undefined, { ...SPRITE, template: 'site-b' });
+    if (missing.ok) throw new Error('should fail');
+    expect(missing.error.code).toBe('bad_request');
+    expect(missing.error.message).toContain('site-b');
+    const bad = await handlers.fill(caller, sid, ref, '{{vault:shop.keypad.sprite}}', undefined, { ...SPRITE, template: '../x' });
+    if (bad.ok) throw new Error('should fail');
+    expect(bad.error.code).toBe('bad_request');
+    expect(state.intents).toHaveLength(1); // 실패한 둘은 브라우저까지 가지 않았다
+
+    // 템플릿을 배선하지 않은 서버에서 template을 대면 전부 bad_request
+    const plain = setup();
+    const psid = await begin(plain.handlers);
+    expect((await plain.handlers.fill(caller, psid, ref, '{{vault:shop.keypad.sprite}}', undefined, { ...SPRITE, template: 'site-a' })).ok).toBe(false);
+    // template 없는 스프라이트 fill은 그대로 내장 템플릿이다 — 인텐트에 glyphs가 없다
+    expect((await plain.handlers.fill(caller, psid, ref, '{{vault:shop.keypad.sprite}}', undefined, SPRITE)).ok).toBe(true);
+    expect('glyphs' in (plain.state.intents[0] as object)).toBe(false);
   });
 
   it('스프라이트 키패드 키는 keypad_sprite 인텐트로 간다 — 감사에 resolver, 값은 없다 (FWL-038)', async () => {

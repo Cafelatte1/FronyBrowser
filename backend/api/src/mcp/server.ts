@@ -182,10 +182,10 @@ export function buildMcpServer(deps: McpDeps, caller: Caller): McpServer {
         keypad: z
           .union([
             z.object({ digitSelector: z.string() }),
-            z.object({ keySelector: z.string(), cellSelector: z.string(), resolver: z.literal('sprite-template') }),
+            z.object({ keySelector: z.string(), cellSelector: z.string(), resolver: z.literal('sprite-template'), template: z.string().regex(/^[a-z0-9-]+$/).optional() }),
           ])
           .optional()
-          .describe('Secure keypad mode: the server presses one key per digit instead of typing. digitSelector is a CSS selector with "{digit}" as the placeholder for the digit; the sprite form is for keypads whose digits are background images. The value must be exactly one "{{vault:key}}" holding digits only.'),
+          .describe('Secure keypad mode: the server presses one key per digit instead of typing. digitSelector is a CSS selector with "{digit}" as the placeholder for the digit; the sprite form is for keypads whose digits are background images, and its optional template names a glyph template the operator registered on this server for that site (omit it for the built-in one). The value must be exactly one "{{vault:key}}" holding digits only.'),
       },
     },
     async ({ sessionId: sid, ref: r, value, grant, keypad }) =>

@@ -24,8 +24,8 @@ import type {
   Session,
 } from '@wallet/core';
 import { KeyNotFoundError, VaultLockedError, fail, failFromUnknown, findKeys, markGrantUsed, resolve, verifyPayGrant, writeUnlockHandoff } from '@wallet/core';
-import type { BrowserProfile, Cipher, KeypadSpec, LaunchProfile, OriginProfiles, PageImage, Ref, SnapshotOptions, TargetKind, TestMode } from '@wallet/core';
-import { isBrowserProfile } from '@wallet/core';
+import type { BrowserProfile, Cipher, GlyphSet, KeypadSpec, LaunchProfile, OriginProfiles, PageImage, Ref, SnapshotOptions, TargetKind, TestMode } from '@wallet/core';
+import { TEMPLATE_NAME, isBrowserProfile } from '@wallet/core';
 import { TargetError, baseDomain } from '@wallet/app';
 
 export type HandlerDeps = {
@@ -43,6 +43,8 @@ export type HandlerDeps = {
   /** origin별로 로그인까지 갔던 기동 조합 (FWL-065). 없으면 호출자 말을 그대로 따른다 — 기억도 검사도 없다 */
   readonly originProfiles?: OriginProfiles;
   readonly handoffCipher?: Cipher;
+  /** 이름 → 스프라이트 키패드 글리프 템플릿 (FWL-073). 없으면 `keypad.template`을 댄 fill은 전부 bad_request */
+  readonly keypadTemplates?: (name: string) => GlyphSet | undefined;
 };
 
 export type Caller = { readonly client: string };
@@ -414,6 +416,7 @@ export function createHandlers(deps: HandlerDeps) {
       }
 
       // 보안 키패드 — 값을 채우는 게 아니라 서버가 숫자 버튼을 누른다. 셀렉터는 호출자가 넘긴다 (FWL-033/038, FWL-055)
+      let glyphs: GlyphSet | undefined;
       if (keypad !== undefined) {
         // 키패드는 한 번에 한 값만 누른다 — 여러 키를 이어붙인 값은 자릿수 대응이 없다
         if (keys.length !== 1) return fail('bad_request', 'keypad fill takes exactly one vault key');
@@ -427,6 +430,13 @@ export function createHandlers(deps: HandlerDeps) {
             rule: 'keypad_digits_only',
           });
           return fail('bad_request', 'keypad value must be digits');
+        }
+        if (!('digitSelector' in keypad) && keypad.template !== undefined) {
+          // 템플릿은 운영자가 이 서버에 둔 파일이다 (FWL-073). 없으면 호출자 쪽 문제로 답한다 —
+          // 판독 실패(keypad_unresolved)와 섞이면 셀렉터를 고칠지 템플릿을 만들지 알 수 없다
+          if (!TEMPLATE_NAME.test(keypad.template)) return fail('bad_request', 'keypad template name must be lowercase letters, digits and hyphens');
+          glyphs = deps.keypadTemplates?.(keypad.template);
+          if (glyphs === undefined) return fail('bad_request', `keypad template is not registered on this server: ${keypad.template}`);
         }
       }
 
@@ -494,7 +504,7 @@ export function createHandlers(deps: HandlerDeps) {
               ? { kind: 'fill', ref, value: resolved.value }
               : 'digitSelector' in keypad
                 ? { kind: 'keypad', ref, digitSelector: keypad.digitSelector, value: resolved.value }
-                : { kind: 'keypad_sprite', ref, keySelector: keypad.keySelector, cellSelector: keypad.cellSelector, resolver: keypad.resolver, value: resolved.value },
+                : { kind: 'keypad_sprite', ref, keySelector: keypad.keySelector, cellSelector: keypad.cellSelector, resolver: keypad.resolver, ...(glyphs ? { glyphs } : {}), value: resolved.value },
           );
           filledRole = r.role ?? null;
         } catch (e) {
@@ -514,7 +524,7 @@ export function createHandlers(deps: HandlerDeps) {
         ref: String(ref),
         role: filledRole,
         mode: keypad !== undefined ? 'keypad' : 'text',
-        ...(keypad !== undefined && !('digitSelector' in keypad) ? { resolver: keypad.resolver } : {}),
+        ...(keypad !== undefined && !('digitSelector' in keypad) ? { resolver: keypad.resolver, ...(keypad.template !== undefined ? { template: keypad.template } : {}) } : {}),
         ...(grantNeededFor !== null ? { grant: true } : {}),
         ...(dry ? { dry: true } : {}), // Test Mode는 감사로그에만 드러난다 — 응답에는 절대 싣지 않는다. 필드 이름은 기록된 사실이라 그대로 둔다
       });
