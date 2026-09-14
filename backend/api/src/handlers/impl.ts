@@ -67,11 +67,19 @@ function isExactOrigin(s: string): boolean {
 
 const BROWSER_PROFILES: ReadonlyArray<BrowserProfile> = ['chromium', 'chrome'];
 
-/** 같은 사이트인가 — 스킴이 같고 등록 가능 도메인이 같다. 서브도메인은 자유다 (FWL-069) */
+const IP_LITERAL = /^(\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:.]+\])$/i;
+
+/**
+ * 같은 사이트인가 — 스킴·포트가 같고 등록 가능 도메인이 같다. 서브도메인은 자유다 (FWL-069).
+ * IP 리터럴은 도메인이 아니므로 정확히 같아야 한다 — baseDomain('127.0.0.1')은 '0.1'이라 다른 IP끼리 같다고 답한다.
+ * 포트도 본다: 같은 호스트의 다른 포트는 다른 서비스다 (이 서버의 관리 화면도 루프백의 다른 포트에 있다)
+ */
 function sameSite(a: string, b: string): boolean {
   const ua = new URL(a);
   const ub = new URL(b);
-  return ua.protocol === ub.protocol && baseDomain(ua.hostname) === baseDomain(ub.hostname);
+  if (ua.protocol !== ub.protocol || ua.port !== ub.port) return false;
+  if (IP_LITERAL.test(ua.hostname) || IP_LITERAL.test(ub.hostname)) return ua.hostname === ub.hostname;
+  return baseDomain(ua.hostname) === baseDomain(ub.hostname);
 }
 
 export function createHandlers(deps: HandlerDeps) {

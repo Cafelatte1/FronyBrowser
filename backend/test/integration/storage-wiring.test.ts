@@ -76,6 +76,13 @@ describe('storageState 배선', () => {
     await target.close(sid);
   }, 60_000);
 
+  it('제공자 쿠키만 실린 세션은 storedLogin=false — 주입이 있어도 이 사이트의 로그인은 아니다 (FWL-070)', async () => {
+    const target = createPlaywrightTarget(pool, { storageStateFor: () => seeded, hasStoredLogin: () => false });
+    const sid = 's_idponly' as SessionId;
+    expect((await target.open(sid, { origin, kind: 'browser', browser: 'chromium', headless: true })).storedLogin).toBe(false);
+    await target.close(sid);
+  }, 60_000);
+
   it('persist 단언이 없으면 재저장 콜백을 부르지 않는다 (FWL-026)', async () => {
     let calls = 0;
     const target = createPlaywrightTarget(pool, {

@@ -65,8 +65,13 @@ function collectSpriteCells(keySelector: string, cellSelector: string): string {
 }
 
 export type PlaywrightTargetOptions = {
-  /** 세션 시작 시 주입할 로그인 상태 — 타겟 origin 것만 (storage.ts가 복호화해 넘긴다) */
+  /** 세션 시작 시 주입할 로그인 상태 (storage.ts가 복호화해 넘긴다). 타겟 origin 것에 로그인 제공자 쿠키가 더해진다 (FWL-070) */
   readonly storageStateFor?: (origin: string) => StorageState | undefined;
+  /**
+   * 이 origin 자체의 저장 로그인이 있는가 — storedLogin 응답의 근거 (FWL-046). 없으면 "주입된 상태가 있다"로 대신하는데,
+   * 주입 상태에 제공자 쿠키만 실릴 수 있으므로(FWL-070) 실제 배선(main.ts)은 반드시 넘긴다 — 아니면 어느 사이트든 true가 된다
+   */
+  readonly hasStoredLogin?: (origin: string) => boolean;
   /**
    * 세션 종료 직전의 storageState 콜백 — 사이트가 연장해 준 쿠키를 재저장한다.
    * 저장 실패가 세션 종료를 막으면 안 되므로 여기서 던진 예외는 무시된다.
@@ -135,7 +140,7 @@ export function createPlaywrightTarget(pool: BrowserPool, opts: PlaywrightTarget
         },
       };
       sessions.set(sessionId, st);
-      const storedLogin = storageState !== undefined;
+      const storedLogin = opts.hasStoredLogin ? opts.hasStoredLogin(origin) : storageState !== undefined;
       const follow = st.follow;
       const watchClose = (p: Page): void => {
         p.on('close', () => {

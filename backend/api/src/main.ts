@@ -123,6 +123,8 @@ function main(): void {
   const target = createPlaywrightTarget(pool, {
     // 시딩된 로그인 세션 주입. 시딩된 origin인데 금고가 잠겨 있으면 로그인 없이 열지 않는다 (FWL-023) —
     // 시딩 파일이 없는 origin(원래 로그인 없이 쓰는 곳)만 그냥 연다
+    // storedLogin은 이 사이트의 파일이 있는지로 답한다 — 주입 상태에는 제공자 쿠키만 실릴 수 있다 (FWL-070)
+    hasStoredLogin: (origin) => hasStorageState(sessionsDir, origin),
     storageStateFor: (origin) => {
       const pp = vault.currentPassphrase();
       if (!pp) {
