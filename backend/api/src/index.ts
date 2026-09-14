@@ -6,5 +6,6 @@ export * from './auth.js';
 export * from './mcp/server.js';
 export * from './http/server.js';
 export * from './auth-admin.js';
+export * from './auth-static.js';
 export * from './keepalive.js';
 export * from './handlers/vault-admin.js';

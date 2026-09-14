@@ -13,6 +13,8 @@ set WALLET_KEEPALIVE=off
 set FRONY_AUTH_URL=http://<fronyauth host>:8640/introspect
 set FRONY_AUTH_ISSUER=https://<fronyauth public host>
 set WALLET_PUBLIC_URL=https://<tailnet host>.ts.net/wallet
+rem Without FronyAuth: drop the three FRONY_AUTH_*/FRONY_SERVICE_KEY lines and WALLET_PUBLIC_URL, and list the keys here instead (FWL-074).
+rem set WALLET_KEYS=agent:<token>,admin-box:<token>
 set WALLET_DATA_DIR=C:\Users\<account>\AppData\Local\Frony\FronyBrowser\data
 rem Needed to fill keys registered with the grant flag; without it those fills fail with grant_invalid. Same value as FronyShopping's launcher.
 set FRONY_GRANT_KEY=<shared secret with FronyShopping>

@@ -8,7 +8,7 @@
 
 ## Host
 
-Home server reachable over Tailscale, single port `9420` for everything (MCP, internal routes, static GUI, health). FronyAuth (introspection dependency) is a separate service reached through `FRONY_AUTH_URL`. The browser profile is chosen per session by the caller: patchright Chromium headless by default, system Chrome headful for a site whose bot manager blocks headless and automation fingerprints.
+Home server reachable over Tailscale, single port `9420` for everything (MCP, internal routes, static GUI, health). FronyAuth (introspection dependency) is a separate service reached through `FRONY_AUTH_URL`; a server without one runs on a static key list instead (`WALLET_KEYS`, see "Static keys" below). The browser profile is chosen per session by the caller: patchright Chromium headless by default, system Chrome headful for a site whose bot manager blocks headless and automation fingerprints.
 
 ## Launcher and environment
 
@@ -18,14 +18,15 @@ Launcher file `C:\Users\<account>\wallet-server.cmd` (outside the repo; start fr
 
 | Var | Default | Notes |
 |---|---|---|
-| `FRONY_SERVICE_KEY` | — (required) | no fallback — start-up exits if missing |
+| `FRONY_SERVICE_KEY` | — (required with FronyAuth) | no fallback — start-up exits if missing, unless `WALLET_KEYS` or `WALLET_LOCAL` is set |
 | `FRONY_GRANT_KEY` | — | required to fill any key registered with the vault's `grant` flag; must match the issuing service's copy — see [pay-grant](pay-grant.md) |
 | `WALLET_BIND` | `tailscale ip -4`, else `127.0.0.1` | rejected at start-up unless loopback or `100.64.0.0/10` |
 | `WALLET_PORT` | `9420` | |
 | `WALLET_DATA_DIR` | `%LOCALAPPDATA%\Frony\FronyBrowser\data` | holds `vault.dpapi`, `sessions/*.dpapi`, `audit.jsonl`, `test-mode.json` |
-| `FRONY_AUTH_URL` | — (required) | FronyAuth introspection endpoint |
-| `FRONY_AUTH_ISSUER` | — (required) | FronyAuth public origin, published as `authorization_servers` in the OAuth metadata (FWL-040) |
-| `WALLET_ADMIN_CLIENTS` | (empty) | comma-separated caller ids allowed on `/vault/*` via device key. FronyAuth resolves a bearer to `key:<device>` or `oauth:<app>:<subject>`, and that resolved string is what this list matches — so a connector user can never be admin, only a device key can. Keep the agents' own device keys **out** of it — a key that reaches `/mcp` and `/vault/grant` alike lets an agent clear its own grant requirement. This server holds `key:gpu-wallet-deploy` only (2026-09-12); the console's own login session is the normal admin path and is unaffected |
+| `FRONY_AUTH_URL` | — (required with FronyAuth) | FronyAuth introspection endpoint. Mutually exclusive with `WALLET_KEYS` |
+| `FRONY_AUTH_ISSUER` | — (required with FronyAuth) | FronyAuth public origin, published as `authorization_servers` in the OAuth metadata (FWL-040) |
+| `WALLET_KEYS` | — | `name:token,name:token` — static bearer list for a server with no FronyAuth (FWL-074). Each token resolves to the caller `key:<name>`, the same string FronyAuth would produce, so `WALLET_ADMIN_CLIENTS` and the audit log read the same. Cannot be combined with `FRONY_AUTH_URL` or `WALLET_PUBLIC_URL` |
+| `WALLET_ADMIN_CLIENTS` | (empty) | comma-separated caller ids allowed on `/vault/*` via device key, and under `WALLET_KEYS` also the only names the console login accepts. FronyAuth resolves a bearer to `key:<device>` or `oauth:<app>:<subject>`, and that resolved string is what this list matches — so a connector user can never be admin, only a device key can. Keep the agents' own device keys **out** of it — a key that reaches `/mcp` and `/vault/grant` alike lets an agent clear its own grant requirement. This server holds `key:gpu-wallet-deploy` only (2026-09-12); the console's own login session is the normal admin path and is unaffected |
 | `WALLET_SESSION_TTL` | `15m` | browser session idle TTL; every action extends it. The expiry sweep runs every `min(60s, TTL/5)` (FWL-036). The GPU server runs `30m` (2026-09-08 decided, was `40m` for a day): the same length as the consumer's 30-minute transaction, so an idle session and its transaction expire together |
 | `WALLET_MAX_SESSIONS` | `4` | concurrent sessions across all clients; beyond it `session_begin` returns `session_limit` |
 | `WALLET_BROWSER_IDLE` | `5m` | a launched browser (headful Chrome window included) is closed this long after its last session context closes; the next session relaunches it |
@@ -37,6 +38,17 @@ Launcher file `C:\Users\<account>\wallet-server.cmd` (outside the repo; start fr
 ## Local mode
 
 `WALLET_LOCAL=1` (FWL-053) is the exception to every authentication rule: the server binds to `127.0.0.1` only (a `WALLET_BIND` naming another interface refuses start-up), FronyAuth is never contacted, no bearer is checked, and every caller is `local` with admin rights. The vault page opens without a login form (`/login` hands out a session for any body) and requests whose `Host` is not loopback get `403` (DNS-rebinding guard). CORS headers are set only on `/mcp` and its metadata path (2026-09-12), so a page open in the same browser cannot read a reply from `/login` or `/vault/*`; the Host guard alone never stopped that, since `127.0.0.1` is exactly the Host a browser sends. It exists for one person on one machine: `WALLET_LOCAL=1 npm run -w backend/api dev`, then open `http://127.0.0.1:9420/`. The moment another device should reach the server, run the normal mode with FronyAuth.
+
+## Static keys
+
+`WALLET_KEYS` (FWL-074) runs the normal mode — Tailscale or loopback binding, bearer on every call, admin gate on
+`/vault/*` — without FronyAuth. The launcher holds the list itself, `name:token,name:token`; the server compares in
+constant time and never writes a token anywhere. Issuing or revoking a key is editing the launcher and restarting.
+The console login takes a key **name** as the username and its **token** as the password, and only a name listed
+in `WALLET_ADMIN_CLIENTS` (as `key:<name>`) gets in; five failures from one address lock that address out for
+15 minutes, which is what FronyAuth's `/admin/verify` did. `wallet unlock` and the deploy handoff use an admin key as
+`FRONY_KEY`. What this mode does not give: expiry, OAuth, revocation without a restart, or a Funnel connector —
+those are FronyAuth's, and `WALLET_PUBLIC_URL` refuses to start alongside `WALLET_KEYS`.
 
 ## Deploy
 
