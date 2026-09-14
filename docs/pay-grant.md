@@ -11,11 +11,11 @@ else about grants is in the code.
 
 A key to an irreversible action — a payment password — is never filled without proof that the payment is a legitimate transaction. That proof is the pay grant.
 
-Wallet does not decide what to buy or whether the price is right — it holds no business logic. That judgment is made by FronyShopping as it passes `open_transaction` → `identify_item` → `check_cart`, and the pay grant hands that verdict to wallet as **one signed token**. The two servers never call each other — they share one symmetric key (`FRONY_GRANT_KEY`), and the token travels through the agent's hands. Even if the agent is prompt-injected, it cannot forge the signature, so passing the token through it is not itself a risk.
+Wallet does not decide whether the action is right — it holds no business logic. That judgment belongs to the issuer, the service that owns the decision (for a purchase: the shopping service, after its own checks pass), and the pay grant hands that verdict to wallet as **one signed token**. The two servers never call each other — they share one symmetric key (`FRONY_GRANT_KEY`), and the token travels through the agent's hands. Even if the agent is prompt-injected, it cannot forge the signature, so passing the token through it is not itself a risk.
 
 | Role | Who |
 |---|---|
-| Issue | the grant issuer — the calling service that owns the purchase decision; currently FronyShopping `begin_checkout` (only after `check_cart` passes, for the same session) |
+| Issue | the grant issuer — the calling service that owns the decision. On the operator's home server that is FronyShopping's `begin_checkout`, after its own checks pass, for the same session |
 | Carry | the agent (passed as-is in `fill`'s `grant` argument) |
 | Verify | FronyBrowser `fill`, only for keys carrying the vault's `grant` flag (`backend/core/src/grant.ts`) |
 
@@ -33,9 +33,8 @@ Payload:
 ```json
 {
   "v": 1,
-  "txn_id": "<FronyShopping transaction id>",
+  "txn_id": "<issuer's correlation id>",
   "session_id": "<wallet sessionId>",
-  "max_total": 23400,
   "iat": 1800000000,
   "exp": 1800000300
 }
@@ -44,13 +43,12 @@ Payload:
 | Field | Type | Meaning |
 |---|---|---|
 | `v` | fixed `1` | any other value → `malformed` |
-| `txn_id` | string | FronyShopping's transaction id, for joining audits |
+| `txn_id` | string | the issuer's correlation id, for joining audits — its meaning is the issuer's |
 | `session_id` | string | the **wallet-issued** sessionId; used from another session is rejected |
-| `max_total` | integer | the cap for that transaction; wallet only records it, never judges against it |
 | `iat` | integer (unix seconds) | issue time |
 | `exp` | integer (unix seconds) | `iat + 300` — TTL fixed at 300 seconds |
 
-`max_total`/`iat`/`exp` must be integers (`Number.isInteger`); otherwise `malformed`.
+`iat`/`exp` must be integers (`Number.isInteger`); otherwise `malformed`. **Fields wallet does not know are ignored** (FWL-072): an issuer may carry its own values — a spending cap, an order reference — inside the signed payload for its own audit. Wallet never reads them and has not judged amounts since FWL-055. (`max_total` used to be required; it is now just such a field.)
 
 ## Verification order (fail-closed)
 
