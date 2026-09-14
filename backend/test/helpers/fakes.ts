@@ -159,5 +159,5 @@ export function freshGrant(
   nowMs = Date.now(),
 ): string {
   const iat = Math.floor(nowMs / 1000);
-  return signPayGrant({ v: 1, txn_id: 'txn-1', max_total: 20000, iat, exp: iat + 300, ...over }, key);
+  return signPayGrant({ v: 1, txn_id: 'txn-1', iat, exp: iat + 300, ...over }, key);
 }

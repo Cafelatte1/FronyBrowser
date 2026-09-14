@@ -17,7 +17,7 @@ const NOW = 1_800_000_000_000; // ms
 
 function payload(over: Partial<PayGrantPayload> = {}): PayGrantPayload {
   const iat = Math.floor(NOW / 1000);
-  return { v: 1, txn_id: 'txn-1', session_id: SID, max_total: 20000, iat, exp: iat + 300, ...over };
+  return { v: 1, txn_id: 'txn-1', session_id: SID, iat, exp: iat + 300, ...over };
 }
 
 function ctx(over: { sessionId?: string; nowMs?: number; used?: Set<string> } = {}) {
@@ -50,7 +50,7 @@ describe('verifyPayGrant', () => {
   it('payload를 건드리면 bad_signature — 금액·세션을 바꿔치기할 수 없다', () => {
     const token = signPayGrant(payload(), KEY);
     const [, , sig] = token.split('.') as [string, string, string];
-    const forged = Buffer.from(JSON.stringify(payload({ max_total: 9_999_999 })), 'utf8').toString('base64url');
+    const forged = Buffer.from(JSON.stringify(payload({ exp: 9_999_999_999 })), 'utf8').toString('base64url');
     expect(verifyPayGrant(`pg1.${forged}.${sig}`, KEY, ctx())).toEqual({ ok: false, reason: 'bad_signature' });
   });
 
@@ -81,6 +81,12 @@ describe('verifyPayGrant', () => {
     });
   });
 
+  it('모르는 필드는 무시한다 — 발급자가 자기 감사용 값을 실어도 계약은 깨지지 않는다 (FWL-072)', () => {
+    const seg = Buffer.from(JSON.stringify({ ...payload(), max_total: 23400, note: 'issuer-only' }), 'utf8').toString('base64url');
+    const sig = createHmac('sha256', KEY).update(seg, 'ascii').digest('base64url');
+    expect(verifyPayGrant(`pg1.${seg}.${sig}`, KEY, ctx()).ok).toBe(true);
+  });
+
   it('형식이 아니면 malformed — 서명이 맞아도 payload가 계약을 안 지키면 거부', () => {
     for (const junk of ['', 'garbage', 'pg1.only-two', 'pg1.a.b.c', 'pg2.a.b']) {
       expect(verifyPayGrant(junk, KEY, ctx()), junk).toEqual({ ok: false, reason: 'malformed' });
@@ -88,9 +94,9 @@ describe('verifyPayGrant', () => {
     // 서명은 유효하지만 본문이 계약 위반인 것들
     for (const bad of [
       'not json',
-      JSON.stringify({ v: 2, txn_id: 't', session_id: SID, max_total: 1, iat: 1, exp: 9_999_999_999 }),
-      JSON.stringify({ v: 1, session_id: SID, max_total: 1, iat: 1, exp: 9_999_999_999 }),
-      JSON.stringify({ v: 1, txn_id: 't', session_id: SID, max_total: 1.5, iat: 1, exp: 9_999_999_999 }),
+      JSON.stringify({ v: 2, txn_id: 't', session_id: SID, iat: 1, exp: 9_999_999_999 }),
+      JSON.stringify({ v: 1, session_id: SID, iat: 1, exp: 9_999_999_999 }),
+      JSON.stringify({ v: 1, txn_id: 't', session_id: SID, iat: 1.5, exp: 9_999_999_999 }),
       JSON.stringify([1, 2, 3]),
     ]) {
       const seg = Buffer.from(bad, 'utf8').toString('base64url');

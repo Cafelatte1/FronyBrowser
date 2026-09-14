@@ -18,10 +18,10 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 
 export type PayGrantPayload = {
   v: 1;
+  /** 발급자의 상관 id — 감사 대조용. 의미는 발급자가 정한다 */
   txn_id: string;
   /** wallet이 발급한 sessionId. 다른 세션에서 재생하면 거부된다 */
   session_id: string;
-  max_total: number;
   iat: number;
   /** iat + 300 */
   exp: number;
@@ -59,14 +59,15 @@ function parsePayload(payloadSeg: string): PayGrantPayload | null {
   const p = raw as Record<string, unknown>;
   if (p['v'] !== 1) return null;
   if (typeof p['txn_id'] !== 'string' || typeof p['session_id'] !== 'string') return null;
-  for (const f of ['max_total', 'iat', 'exp']) {
+  for (const f of ['iat', 'exp']) {
     if (!Number.isInteger(p[f])) return null;
   }
+  // 모르는 필드는 무시한다 (FWL-072) — 발급자가 자기 감사용으로 실어 보내는 값(예: 금액 상한)은 서명 안에 있으니
+  // 위조는 못 하고, wallet은 FWL-055 이후 금액을 판단하지 않으므로 읽을 이유도 없다. 발급자를 상거래에 묶지 않는다
   return {
     v: 1,
     txn_id: p['txn_id'],
     session_id: p['session_id'],
-    max_total: p['max_total'] as number,
     iat: p['iat'] as number,
     exp: p['exp'] as number,
   };
