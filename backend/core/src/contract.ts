@@ -95,7 +95,8 @@ export type FillRequest = {
 
 export type KeypadSpec =
   | { readonly digitSelector: string }
-  | { readonly keySelector: string; readonly cellSelector: string; readonly resolver: KeypadResolver };
+  /** template: 운영자가 이 서버에 둔 글리프 템플릿 이름 (`keypads/<name>.json`, FWL-073). 없으면 내장 템플릿 */
+  | { readonly keySelector: string; readonly cellSelector: string; readonly resolver: KeypadResolver; readonly template?: string };
 
 /** 값은 절대 반환하지 않는다. 키 이름과 길이뿐이다 */
 export type FillResponse = {

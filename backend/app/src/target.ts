@@ -307,7 +307,7 @@ export function createPlaywrightTarget(pool: BrowserPool, opts: PlaywrightTarget
           const spriteBytes = Buffer.from((known[0] as { sprite: string }).sprite.slice('data:image/png;base64,'.length), 'base64');
           let digitsByIndex: string[];
           try {
-            digitsByIndex = resolveKeypadSprite(spriteBytes, known.map(({ x, y, w, h }) => ({ x, y, w, h })));
+            digitsByIndex = resolveKeypadSprite(spriteBytes, known.map(({ x, y, w, h }) => ({ x, y, w, h })), intent.glyphs);
           } catch (e) {
             if (e instanceof KeypadUnresolvedError) throw new TargetError('keypad_unresolved');
             throw e;

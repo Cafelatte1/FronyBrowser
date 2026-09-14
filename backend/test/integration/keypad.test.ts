@@ -12,6 +12,7 @@ import type { AddressInfo } from 'node:net';
 import { resolve } from 'node:path';
 import { PNG } from 'pngjs';
 import type { Ref, SessionId } from '@wallet/core';
+import { SPRITE_KEYPAD_GLYPHS } from '@wallet/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createBrowserPool, createPlaywrightTarget } from '@wallet/app';
 
@@ -147,6 +148,15 @@ describe('keypad — 서버가 숫자 버튼을 누른다', () => {
     const r = await target.act(sid, { kind: 'keypad_sprite', ref, ...SPRITE, value: '4951' });
     expect(await target.extract(sid, '#cp-out')).toBe('4589');
     expect(r.role).toBe('heading');
+  }, 30_000);
+
+  it('스프라이트 키패드: 인텐트의 glyphs가 판독 템플릿이다 (FWL-073) — 맞는 것은 읽고, 반쪽짜리는 keypad_unresolved', async () => {
+    const ref = await spriteRef();
+    await target.act(sid, { kind: 'keypad_sprite', ref, ...SPRITE, glyphs: SPRITE_KEYPAD_GLYPHS, value: '49' });
+    expect(await target.extract(sid, '#cp-out')).toBe('45');
+    const half = Object.fromEntries(Object.entries(SPRITE_KEYPAD_GLYPHS).slice(0, 5));
+    await expect(target.act(sid, { kind: 'keypad_sprite', ref, ...SPRITE, glyphs: half, value: '5' })).rejects.toMatchObject({ code: 'keypad_unresolved' });
+    expect(await target.extract(sid, '#cp-out')).toBe('45');
   }, 30_000);
 
   it('스프라이트 키패드: 글리프가 하나라도 안 맞으면 keypad_unresolved — 아무것도 누르지 않는다', async () => {

@@ -5,7 +5,7 @@
  * 안전 규칙이 계약에 박혀 있어 새 어댑터에도 자동으로 적용된다.
  */
 
-import type { KeypadResolver } from './keypad-sprite.js';
+import type { GlyphSet, KeypadResolver } from './keypad-sprite.js';
 import type { LaunchProfile, PageImage, PageInfo, Ref, SafeSnapshot, SessionId, SnapshotOptions } from './types.js';
 
 /** 어댑터가 수행할 수 있는 동작. 화이트리스트다 */
@@ -20,9 +20,10 @@ export type Intent =
   /**
    * 스프라이트 키패드 입력 (FWL-038). 숫자가 DOM에 없다 — 어댑터가 `keySelector` 버튼마다 `cellSelector`의
    * computed 배경 스프라이트·위치·박스를 읽어 core의 판독기로 자리→숫자를 얻은 뒤 `value`의 자릿수 순서로 버튼을 누른다.
-   * 판독이 하나라도 애매하면 keypad_unresolved — 아무것도 누르지 않는다
+   * 판독이 하나라도 애매하면 keypad_unresolved — 아무것도 누르지 않는다.
+   * `glyphs`는 호출자가 template으로 고른 글리프 (FWL-073); 없으면 내장 템플릿이다
    */
-  | { readonly kind: 'keypad_sprite'; readonly ref: Ref; readonly keySelector: string; readonly cellSelector: string; readonly resolver: KeypadResolver; readonly value: string }
+  | { readonly kind: 'keypad_sprite'; readonly ref: Ref; readonly keySelector: string; readonly cellSelector: string; readonly resolver: KeypadResolver; readonly glyphs?: GlyphSet; readonly value: string }
   | { readonly kind: 'click'; readonly ref: Ref }
   | { readonly kind: 'select'; readonly ref: Ref; readonly option: string }
   /** 요소가 보이도록 스크롤 (FWL-061). 페이지가 아니라 그 요소를 품은 스크롤 컨테이너를 움직인다 — 모달·사이드패널 안에서도 듣는다 */

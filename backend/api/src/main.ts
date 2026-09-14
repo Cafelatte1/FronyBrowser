@@ -22,7 +22,7 @@ import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPlaywrightTarget, createBrowserPool, hasStorageState, mergeStorageStates, persistStorageStates } from '@wallet/app';
-import { VaultLockedError, consumeUnlockHandoff, createAudit, createOriginProfiles, createSessionStore, createTestMode, createVault, defaultDataDir } from '@wallet/core';
+import { VaultLockedError, consumeUnlockHandoff, createAudit, createOriginProfiles, createSessionStore, createTestMode, createVault, defaultDataDir, readGlyphTemplate } from '@wallet/core';
 import { parseDuration } from '@wallet/core';
 import { createAdminVerifier } from './auth-admin.js';
 import { createIntrospectionVerifier } from './auth.js';
@@ -151,7 +151,9 @@ function main(): void {
   });
   // origin별로 로그인까지 갔던 기동 조합 (FWL-065) — 호출자가 조합을 틀리면 세션을 열기 전에 막는다
   const originProfiles = createOriginProfiles(join(dataDir, 'origins.json'));
-  const handlers = createHandlers({ vault, sessions, targets: new Map([['browser', target]]), audit, grantKey, testMode, handoffFile, originProfiles });
+  // 스프라이트 키패드 글리프 템플릿 (FWL-073) — `wallet keypad-template`이 만든 파일. fill마다 읽으므로 재시작 없이 추가된다
+  const keypadTemplates = (name: string) => readGlyphTemplate(join(dataDir, 'keypads', `${name}.json`));
+  const handlers = createHandlers({ vault, sessions, targets: new Map([['browser', target]]), audit, grantKey, testMode, handoffFile, originProfiles, keypadTemplates });
 
   // 로컬 모드에선 authenticate와 /login이 먼저 끊어 이 자리에 닿지 않는다 (FWL-053)
   const notUsedInLocalMode = (): never => {

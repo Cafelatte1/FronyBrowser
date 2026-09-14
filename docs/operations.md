@@ -96,7 +96,14 @@ arrive per call from the calling service. Steps, on the server machine:
    account. Every key is `group.subject.field` (FWL-057).
 3. **Tick `grant` on the payment keys** in the console. That is the only per-key rule left, and it is what stops a
    payment PIN being filled outside a checkout the calling service vouched for.
-4. Then the FronyShopping side: `platform add`, the playbook, and a scrubbed capture under its `docs/sites/<id>/`
+4. **Only if the site's PIN keypad is a sprite** (the digits are cells of one background image, so nothing in the
+   DOM says which key is which) and the built-in glyph template does not read it (`keypad_unresolved` on every
+   attempt): make a template for that site (FWL-073). Save the keypad's sprite PNG from the browser's devtools, note
+   the cell size and the digit each cell shows, row by row, and on the server run
+   `wallet keypad-template <sprite.png> --cells 25x26 --order 8035/7426/19 --out <site>`. It writes
+   `<data root>/keypads/<site>.json`, which the server reads on every fill — no restart. The caller's playbook then
+   adds `template: "<site>"` to the sprite keypad spec. The file holds glyph shapes, not values, so it needs no vault.
+5. Then the FronyShopping side: `platform add`, the playbook, and a scrubbed capture under its `docs/sites/<id>/`
    (project-shop `docs/operations.md`, "Onboarding a platform"). The browser profile and the keypad selectors for
    this site live there, not here.
 

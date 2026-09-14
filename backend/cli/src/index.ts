@@ -9,16 +9,19 @@
  *   wallet unlock              — 서버의 /vault/unlock 호출 (admin 기기에서만)
  *   wallet handoff             — 재시작 직전에 /vault/handoff 호출: 다음 프로세스가 같은 만료로 unlock을 이어받는다 (FWL-042)
  *   wallet status              — 금고 상태(/health) + TEST MODE 토글 (데이터 디렉터리의 test-mode.json, 서버 머신에서)
+ *   wallet keypad-template <sprite.png> --cells <w>x<h> --order <row/row/..> --out <name>
+ *                              — 스프라이트 키패드의 글리프 템플릿을 데이터 디렉터리의 keypads/<name>.json에 만든다 (FWL-073).
+ *                                order는 스프라이트 셀 순서대로 보이는 숫자를 줄마다 슬래시로 나눈 것 (예: 8035/7426/19)
  *
  * 값·패스프레이즈는 터미널 숨김 입력으로만 받는다.
  * 금고 파일은 WALLET_DATA_DIR (기본 %LOCALAPPDATA%\Frony\FronyBrowser\data)의 vault.dpapi다.
  * unlock·handoff·status는 WALLET_SERVER와 FRONY_KEY를 쓴다.
  */
 
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ValueType, VaultEntry } from '@wallet/core';
-import { defaultDataDir, defaultLabelFor, migrateKeyNames, readTestModeFlag, readVaultFile, seedLabels, writeVaultFile } from '@wallet/core';
+import { KeypadUnresolvedError, TEMPLATE_NAME, buildGlyphSet, cropGlyph, decodePng, defaultDataDir, defaultLabelFor, migrateKeyNames, readTestModeFlag, readVaultFile, seedLabels, writeVaultFile } from '@wallet/core';
 import { promptHidden } from './prompt.js';
 
 const TYPES = ['card', 'phone', 'rrn', 'email', 'name', 'address', 'text'] as const;
@@ -33,7 +36,7 @@ function vaultPath(): string {
 
 function usage(): never {
   console.error(
-    'usage: wallet set <group.subject.field> --type <t> [--grant] [--label "<name>"] | wallet rm <group.subject.field> | wallet list | wallet relabel | wallet migrate-keys | wallet unlock | wallet handoff | wallet status',
+    'usage: wallet set <group.subject.field> --type <t> [--grant] [--label "<name>"] | wallet rm <group.subject.field> | wallet list | wallet relabel | wallet migrate-keys | wallet unlock | wallet handoff | wallet status | wallet keypad-template <sprite.png> --cells <w>x<h> --order <row/row/..> --out <name>',
   );
   console.error(`  types: ${TYPES.join(' ')}`);
   process.exit(2);
@@ -187,6 +190,52 @@ async function main(): Promise<void> {
       const h = (await (await fetch(`${server}/health`)).json()) as { vaultLocked?: boolean; vaultExists?: boolean; vaultTtlMs?: number };
       console.log(`vault: ${!h.vaultExists ? 'no file' : h.vaultLocked ? 'locked' : `unlocked (${Math.round((h.vaultTtlMs ?? 0) / 60_000)}m left)`}`);
     }
+    return;
+  }
+
+  if (cmd === 'keypad-template') {
+    // 사이트의 스프라이트 PNG 한 장으로 글리프 템플릿을 만든다 (FWL-073). 스프라이트는 글꼴이지 값이 아니라 평문으로 둔다
+    if (!key) usage();
+    const arg = (name: string): string | undefined => {
+      const i = rest.indexOf(name);
+      return i >= 0 ? rest[i + 1] : undefined;
+    };
+    const cellsArg = arg('--cells');
+    const order = arg('--order');
+    const out = arg('--out');
+    const m = cellsArg ? /^(\d+)x(\d+)$/.exec(cellsArg) : null;
+    if (!m || !order || !out) usage();
+    if (!TEMPLATE_NAME.test(out)) {
+      console.error(`템플릿 이름은 소문자·숫자·하이픈만: ${out}`);
+      process.exit(1);
+    }
+    const rows = order.split('/');
+    const digits = rows.join('');
+    const cols = (rows[0] as string).length;
+    const w = Number(m[1]);
+    const h = Number(m[2]);
+    const cells = Array.from({ length: digits.length }, (_, i) => ({ x: (i % cols) * w, y: Math.floor(i / cols) * h, w, h }));
+    let glyphs;
+    try {
+      glyphs = buildGlyphSet(readFileSync(key), cells, digits);
+    } catch (e) {
+      if (e instanceof KeypadUnresolvedError) {
+        console.error(`템플릿을 만들 수 없습니다 (${e.reason}) — 셀 크기와 순서를 확인하세요. 열 자리가 한 번씩, 셀마다 글리프 하나여야 합니다`);
+        process.exit(1);
+      }
+      throw e;
+    }
+    // 격자가 틀려도 잘린 글리프끼리는 서로 달라 만들어지긴 한다 — 셀을 1px 안쪽으로 줄였을 때 글리프가 달라지면 가장자리에 닿은 것이니 알린다
+    const png = decodePng(readFileSync(key));
+    const clipped = cells
+      .map((c, i) => (JSON.stringify(cropGlyph(png, c)) !== JSON.stringify(cropGlyph(png, { x: c.x + 1, y: c.y + 1, w: c.w - 2, h: c.h - 2 })) ? digits[i] : null))
+      .filter((d) => d !== null);
+    if (clipped.length > 0) console.warn(`경고: 숫자 ${clipped.join(' ')}의 글리프가 셀 가장자리에 닿습니다 — 셀 크기나 순서가 틀렸을 수 있습니다`);
+    const dir = join(defaultDataDir(), 'keypads');
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `${out}.json`);
+    writeFileSync(file, JSON.stringify(glyphs), 'utf8');
+    console.log(`ok: ${file} — fill의 keypad에 template: "${out}"을 더하면 이 템플릿으로 판독합니다`);
     return;
   }
 
