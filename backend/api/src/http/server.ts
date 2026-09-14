@@ -304,10 +304,11 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
     const body = (await readBody(req)) as
       | { passphrase?: string; key?: string; keys?: string[]; type?: string; value?: string; grant?: unknown; label?: unknown }
       | undefined;
-    // 값을 더하는 쓰기(set)와 금고를 여는 호출(unlock·create)만 마스터 비밀번호를 요구한다.
-    // 나머지(목록·삭제·grant 토글·라벨 시딩)는 금고가 열려 있으면 메모리의 패스프레이즈로 처리한다 —
-    // 관리 UI가 화면을 띄울 때마다 비밀번호를 묻지 않게 한다 (FWL-057). 잠겨 있으면 vault_locked다
-    const ALWAYS_ASK = new Set(['/vault/unlock', '/vault/create', '/vault/set', '/vault/handoff']);
+    // 금고를 여는 호출(unlock·create·handoff)만 마스터 비밀번호를 요구한다. 나머지(목록·저장·삭제·grant 토글·
+    // 라벨 시딩)는 금고가 열려 있으면 메모리의 패스프레이즈로 처리한다 — 관리 UI가 비밀번호를 거듭 묻지
+    // 않게 한다 (FWL-057). set도 여기 속한다 (FWL-068): 같은 세션에서 키 삭제는 비밀번호 없이 되는데
+    // 추가만 다시 묻는 건 일관성이 없었다. 잠겨 있으면 vault_locked다
+    const ALWAYS_ASK = new Set(['/vault/unlock', '/vault/create', '/vault/handoff']);
     const passphrase =
       typeof body?.passphrase === 'string' ? body.passphrase : ALWAYS_ASK.has(url.pathname) ? null : deps.vault.currentPassphrase();
     if (passphrase === null) {

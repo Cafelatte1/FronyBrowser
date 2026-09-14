@@ -223,6 +223,20 @@ describe('/vault/* 인증', () => {
     expect((r.body['error'] as { code: string }).code).toBe('vault_locked');
   });
 
+  it('열린 금고에는 비밀번호 없이 저장된다 — 잠기면 vault_locked (FWL-068)', async () => {
+    const token = await login();
+    await post('/vault/unlock', { passphrase: 'pp' }, token);
+    // 요청에 passphrase가 없다 — 서버가 메모리의 것으로 쓴다. 관리 UI의 "Save this group"이 이 경로다
+    const open = await post('/vault/set', { key: 'open.no.pass', type: 'text', value: 'v' }, token);
+    expect(open.status).toBe(200);
+    expect((await post('/vault/list', {}, token)).body['keys']).toContainEqual(expect.objectContaining({ name: 'open.no.pass' }));
+    vault.lock();
+    const locked = await post('/vault/set', { key: 'locked.no.pass', type: 'text', value: 'v' }, token);
+    expect(locked.status).toBe(403);
+    expect((locked.body['error'] as { code: string }).code).toBe('vault_locked');
+    await post('/vault/unlock', { passphrase: 'pp' }, token);
+  });
+
   it('잘못된 키 이름·타입·빈 값은 400', async () => {
     const token = await login();
     for (const body of [
