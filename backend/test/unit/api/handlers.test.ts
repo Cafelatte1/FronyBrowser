@@ -506,10 +506,12 @@ describe('세션 = origin 하나 (FWL-017)', () => {
     }
   });
 
-  it('navigate는 타겟 origin 안에서만 — 다른 origin은 origin_not_permitted + policy_denied 감사', async () => {
+  it('navigate는 세션의 사이트 안에서만 — 서브도메인은 되고, 다른 사이트는 origin_not_permitted + policy_denied 감사 (FWL-069)', async () => {
     const { handlers, audit } = setup();
     const sid = await begin(handlers);
     expect((await handlers.navigate(caller, sid, 'https://shop.com/cart')).ok).toBe(true);
+    expect((await handlers.navigate(caller, sid, 'https://product.shop.com/item/1')).ok).toBe(true); // 같은 사이트의 다른 서브도메인
+    expect((await handlers.navigate(caller, sid, 'http://shop.com/')).ok).toBe(false); // 스킴이 다르면 다른 사이트다
     const r = await handlers.navigate(caller, sid, 'https://other.com/');
     if (r.ok) throw new Error('should fail');
     expect(r.error.code).toBe('origin_not_permitted');
