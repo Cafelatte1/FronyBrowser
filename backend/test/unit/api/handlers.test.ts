@@ -506,12 +506,21 @@ describe('세션 = origin 하나 (FWL-017)', () => {
     }
   });
 
+  it('IP 리터럴 origin은 정확히 같아야 한다 — baseDomain이 IP를 접어 다른 IP를 같은 사이트로 보지 않게', async () => {
+    const { handlers } = setup();
+    const sid = await begin(handlers, 'http://127.0.0.1:8080');
+    expect((await handlers.navigate(caller, sid, 'http://127.0.0.1:8080/cart')).ok).toBe(true);
+    expect((await handlers.navigate(caller, sid, 'http://10.0.0.1:8080/')).ok).toBe(false);
+    expect((await handlers.navigate(caller, sid, 'http://127.0.0.1:9420/')).ok).toBe(false);
+  });
+
   it('navigate는 세션의 사이트 안에서만 — 서브도메인은 되고, 다른 사이트는 origin_not_permitted + policy_denied 감사 (FWL-069)', async () => {
     const { handlers, audit } = setup();
     const sid = await begin(handlers);
     expect((await handlers.navigate(caller, sid, 'https://shop.com/cart')).ok).toBe(true);
     expect((await handlers.navigate(caller, sid, 'https://product.shop.com/item/1')).ok).toBe(true); // 같은 사이트의 다른 서브도메인
     expect((await handlers.navigate(caller, sid, 'http://shop.com/')).ok).toBe(false); // 스킴이 다르면 다른 사이트다
+    expect((await handlers.navigate(caller, sid, 'https://shop.com:8443/')).ok).toBe(false); // 포트가 다르면 다른 서비스다
     const r = await handlers.navigate(caller, sid, 'https://other.com/');
     if (r.ok) throw new Error('should fail');
     expect(r.error.code).toBe('origin_not_permitted');
