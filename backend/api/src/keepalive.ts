@@ -13,14 +13,16 @@
 import { existsSync, readdirSync } from 'node:fs';
 import type { Audit, Vault } from '@wallet/core';
 import type { Caller, Handlers } from './handlers/impl.js';
+import { isIdpFile } from '@wallet/app';
 
 const KEEPALIVE_CALLER: Caller = { client: 'keepalive' };
 
 /** 시딩 파일명(host 슬러그) → 방문 URL. `127.0.0.1_8080` 같은 포트 슬러그 복원 */
 export function seededHosts(sessionsDir: string): string[] {
   if (!existsSync(sessionsDir)) return [];
+  // 제공자 파일(idp-*.dpapi)은 사이트가 아니다 (FWL-070) — 방문할 홈이 없다
   return readdirSync(sessionsDir)
-    .filter((f) => f.endsWith('.dpapi'))
+    .filter((f) => f.endsWith('.dpapi') && !isIdpFile(f))
     .map((f) => f.slice(0, -'.dpapi'.length).replace(/_(\d+)$/, ':$1'));
 }
 

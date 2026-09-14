@@ -11,6 +11,7 @@ import { fakeCipher } from '../../helpers/fakes.js';
 import {
   baseDomain,
   hasStorageState,
+  isIdpFile,
   mergeStorageStates,
   persistStorageStates,
   readStorageState,
@@ -214,5 +215,42 @@ describe('hasStorageState — 시딩된 origin인가 (FWL-023)', () => {
     writeFileSync(join(dir, 'www.example.com.txt'), 'x');
     expect(hasStorageState(dir, 'https://www.shop-a.example')).toBe(true);
     expect(hasStorageState(dir, 'https://www.example.com')).toBe(false);
+  });
+});
+
+describe('로그인 제공자 쿠키 — 자기 파일에 두고 모든 세션에 싣는다 (FWL-070)', () => {
+  /** merge/read 결과의 쿠키 이름들 — storageState 타입이 문자열(파일 경로)도 허용해서 좁힌다 */
+  const names = (st: unknown): string[] => ((st as { cookies?: Array<{ name: string }> } | undefined)?.cookies ?? []).map((c) => c.name);
+  it('종료 시 제공자 도메인 쿠키는 idp-<domain>.dpapi로 가고, 사이트 파일에는 섞이지 않는다', () => {
+    const dir = dirFor('idp-persist');
+    const state = { cookies: [cookie('sid', 'www.shop-a.example'), cookie('SID', '.google.com'), cookie('NID', 'nid.naver.com'), cookie('other', 'tracker.example')] };
+    const updated = persistStorageStates(dir, 'pp', state, fakeCipher, undefined, 'https://www.shop-a.example');
+    expect(updated.sort()).toEqual(['idp-google.com', 'idp-naver.com', 'www.shop-a.example']);
+    expect(names(readStorageState(dir, 'https://www.shop-a.example', 'pp', fakeCipher))).toEqual(['sid']);
+    expect(existsSync(join(dir, 'idp-google.com.dpapi'))).toBe(true);
+    expect(existsSync(join(dir, 'idp-tracker.example.dpapi'))).toBe(false); // 허용목록 밖 타사 쿠키는 그대로 버린다
+  });
+
+  it('다른 사이트의 세션에도 제공자 쿠키가 실린다 — 제공자 버튼이 열 페이지가 이미 로그인돼 있게', () => {
+    const dir = dirFor('idp-merge');
+    persistStorageStates(dir, 'pp', { cookies: [cookie('sid', 'www.shop-a.example'), cookie('SID', '.google.com')] }, fakeCipher, undefined, 'https://www.shop-a.example');
+    writeStorageState(dir, 'https://www.shop-b.example', 'pp', { cookies: [cookie('kb', 'shop-b.example')] }, fakeCipher);
+    const forB = mergeStorageStates(dir, 'pp', 'https://www.shop-b.example', fakeCipher);
+    expect(names(forB).sort()).toEqual(['SID', 'kb']); // 사이트 A 쿠키는 여전히 없다
+    // 저장된 로그인이 없는 사이트도 제공자 쿠키만 받는다
+    expect(names(mergeStorageStates(dir, 'pp', 'https://www.shop-c.example', fakeCipher))).toEqual(['SID']);
+  });
+
+  it('제공자 파일은 사이트로 세지 않는다 — hasStorageState는 무시하고, 축소 가드는 똑같이 적용된다', () => {
+    const dir = dirFor('idp-guard');
+    const many = { cookies: [cookie('a', '.google.com'), cookie('b', '.google.com'), cookie('c', '.google.com'), cookie('d', '.google.com')] };
+    persistStorageStates(dir, 'pp', many, fakeCipher);
+    expect(hasStorageState(dir, 'https://accounts.google.com')).toBe(false);
+    expect(isIdpFile('idp-google.com.dpapi')).toBe(true);
+    expect(isIdpFile('www.google.com.dpapi')).toBe(false);
+    const skipped: string[] = [];
+    persistStorageStates(dir, 'pp', { cookies: [cookie('a', '.google.com')] }, fakeCipher, (host) => skipped.push(host));
+    expect(skipped).toEqual(['idp-google.com']);
+    expect(names(mergeStorageStates(dir, 'pp', 'https://www.any.example', fakeCipher))).toHaveLength(4); // 덮이지 않았다
   });
 });

@@ -34,6 +34,7 @@ function setup(locked = false) {
 describe('keepalive', () => {
   it('시딩된 host마다 방문하고 세션을 정리한다 (포트 슬러그 복원 포함)', async () => {
     const dir = seededDir('visit', ['www.shop-a.example', 'www.shop-b.example', '127.0.0.1_8080']);
+    writeFileSync(join(dir, 'idp-google.com.dpapi'), 'blob'); // 제공자 파일은 방문할 사이트가 아니다 (FWL-070)
     expect(seededHosts(dir).sort()).toEqual(['127.0.0.1:8080', 'www.shop-a.example', 'www.shop-b.example']);
 
     const { handlers, audit, vault, visited } = setup();
