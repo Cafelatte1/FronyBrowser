@@ -484,3 +484,23 @@ describe('삭제 · 대화상자 · 상태 변화', () => {
     expect(sessionStorage.getItem('wallet-wsess')).toBeNull();
   });
 });
+
+describe('서버가 바꾼 이름 (FWL-079)', () => {
+  it('등록된 키는 서버의 라벨로 보이고, 다시 저장해도 스키마 이름으로 되돌아가지 않는다', async () => {
+    // 앞 describe가 금고를 reset하고 끝나므로 상태를 직접 세운다.
+    // 운영자가 콘솔 밖에서 이름만 바꿔 둔 상황이다 (POST /vault/label, FWL-078)
+    vaultExists = true; vaultLocked = false; ttlMs = TTL_MAX;
+    registered.clear();
+    registered.set('card.personal.number', { name: 'card.personal.number', type: 'card', len: 16, grant: false, label: '카카오뱅크' });
+    await relogin();
+    nav('card').click();
+    await settle();
+    expect(row('card.personal.number').querySelector('.row-label')?.firstElementChild?.textContent).toBe('카카오뱅크');
+
+    // 저장이 스키마 이름을 도로 실어 보내면 이름이 지워진다 — 그게 이 단언의 이유다
+    type(inputFor('card.personal.number'), '4111-1111-1111-1111');
+    await save();
+    const entries = sets().at(-1)?.body['entries'] as Array<{ key: string; label: string }>;
+    expect(entries.find((e) => e.key === 'card.personal.number')?.label).toBe('카카오뱅크');
+  });
+});
