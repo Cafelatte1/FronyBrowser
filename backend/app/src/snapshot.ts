@@ -10,9 +10,14 @@
  * 슬라이스 (FWL-043): `ref` 서브트리만, 또는 `filter: 'interactive'`(클릭·입력 대상만)로 출력을 줄인다.
  * 어느 쪽이든 수집·번호 매기기는 전문과 같다 — 페이지 전체를 문서 순서로 훑어 모든 요소에 ref를 주고,
  * 출력할 줄만 고른다. 그래서 DOM이 같으면 슬라이스와 전문의 ref index가 같다 (gen은 호출마다 오른다).
+ * 예외가 하나 있다: `ref` 슬라이스는 접힌 클릭 대상 **안쪽까지** 수집한다 (FWL-077).
+ *
+ * 크기 (FWL-076): 트리는 `TREE_BUDGET`에서 줄 경계로 끊고, 끊긴 자리에 몇 줄이 남았는지와
+ * `after`로 어디서부터 이어보는지를 남긴다. 줄이 조용히 사라지지는 않는다.
  */
 
 import type { Ref, SafeSnapshot, SnapshotBody, SnapshotOptions } from '@wallet/core';
+import { parseRef } from '@wallet/core';
 import type { ElementHandle, Frame, Page } from 'patchright';
 import type { RefTable } from './refs.js';
 
@@ -150,13 +155,24 @@ const COLLECT = `
     for (let p = el.parentElement; p; p = p.parentElement) if (accepted.has(p)) return true;
     return false;
   };
+  // 자기 텍스트를 가진 마지막 요소 — 글자를 가진 자식 요소가 없다. 드롭다운 항목 하나가 여기 해당한다
+  const textLeaf = (el) => {
+    for (const c of el.children) if (/\\S/.test(c.textContent)) return false;
+    return true;
+  };
   const isClickable = (el) => {
     if (hits.has(el) || wraps.has(el) || SKIP_TAG.has(el.tagName)) return false;
     if (!/\\S/.test(el.textContent)) return false;
     if (el.parentElement && el.parentElement.closest(SELECTOR)) return false; // 정식 버튼 안의 텍스트
-    if (insideAccepted(el)) return false; // 바깥쪽 clickable 하나만 — cursor는 자식에게 상속된다
+    // 기본은 바깥쪽 clickable 하나만 낸다 — cursor는 자식에게 상속되므로, 안 그러면 중첩 래퍼가 전부 줄이 된다.
+    // 다만 ref 슬라이스 안에서는 잎까지 내려간다 (FWL-077): 커스텀 드롭다운이 이 규칙에 통째로 걸려
+    // 항목 열두 개가 부모 한 줄의 **이름**으로 이어붙어 나왔고, 항목에는 ref가 아예 없었다.
+    // 잎은 cursor를 묻지 않는다 — 클릭 대상으로 뽑힌 부모 안에 있다는 것이 이미 근거다
+    const inClickable = insideAccepted(el);
+    const leaf = inClickable && !!root && root.contains(el) && textLeaf(el);
+    if (inClickable && !leaf) return false;
     if (!visible(el)) return false;
-    if (!el.matches(CLICK_ATTR) && getComputedStyle(el).cursor !== 'pointer') return false;
+    if (!leaf && !el.matches(CLICK_ATTR) && getComputedStyle(el).cursor !== 'pointer') return false;
     return clean(safeText(el)) !== '';
   };
   const inside = (el) => (root ? root === el || root.contains(el) : true);
@@ -352,7 +368,7 @@ function leanLines(all: ReadonlyArray<Line>): Line[] {
 }
 
 /** 줄을 문자열로. fold면 같은 role·빈 이름의 연속(≥ FOLD_MIN)을 `×N [ref=first..last]` 한 줄로 접는다 */
-function formatLines(lines: ReadonlyArray<Line>, fold: boolean): string {
+function formatLines(lines: ReadonlyArray<Line>, fold: boolean): string[] {
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i] as Line;
@@ -382,7 +398,56 @@ function formatLines(lines: ReadonlyArray<Line>, fold: boolean): string {
     const href = l.href === null ? '' : ` href=${l.href}`;
     out.push(`${pad}- ${l.role} "${l.name}"${state} [ref=${l.ref}]${href}`);
   }
-  return out.join('\n');
+  return out;
+}
+
+/**
+ * 한 응답에 실을 트리의 최대 글자 수 (FWL-076).
+ *
+ * 실측(2026-09-15) 기준 평범한 페이지가 이미 13~24k자다 — 교보문고 메인 13.9k, 검색 결과 13.3k,
+ * 지마켓 메인 23.5k(raw 41.6k). 결제 페이지는 입력 요소만 448개였다. 그 위쪽은 MCP 클라이언트가
+ * 말없이 자르는 구간이고, 잘린 트리는 **줄이 사라진 티가 안 난다** — 에이전트는 없는 버튼을
+ * 찾다가 포기한다. 그래서 자르는 쪽을 서버가 가져와서, 어디서 끊겼고 어떻게 이어보는지 남긴다.
+ * 평범한 페이지는 이 선에 닿지 않으므로 기존 동작이 그대로다.
+ */
+const TREE_BUDGET = 30_000;
+
+/** 잘림 안내 줄이 차지할 자리 */
+const CUT_NOTE_ROOM = 120;
+
+/** 줄 끝의 ref. 접힌 줄(`[ref=a..b]`)은 뒤쪽을 집는다 — 이어보기는 그 줄까지 읽은 것이므로 */
+const LAST_REF = /\[ref=(?:[^\]]*\.\.)?([^\]]+)\]/;
+
+/**
+ * 예산에 맞춰 줄 경계에서 끊고, 끊겼으면 이어보는 방법을 마지막 줄로 붙인다 (FWL-076).
+ * 줄이 조용히 사라지는 경우는 없다 — 몇 줄이 남았는지와 어디서부터 이어야 하는지가 항상 트리 안에 있다.
+ */
+function fitBudget(out: ReadonlyArray<string>): string {
+  const total = out.reduce((n, l) => n + l.length + 1, 0);
+  if (total <= TREE_BUDGET) return out.join('\n');
+  const kept: string[] = [];
+  let used = 0;
+  for (const line of out) {
+    if (used + line.length + 1 > TREE_BUDGET - CUT_NOTE_ROOM) break;
+    kept.push(line);
+    used += line.length + 1;
+  }
+  const last = kept.reduceRight<string | undefined>((found, l) => found ?? LAST_REF.exec(l)?.[1], undefined);
+  const more = out.length - kept.length;
+  kept.push(
+    last === undefined
+      ? `- … ${more} more lines did not fit`
+      : `- … ${more} more lines did not fit — page_tree with after "${last}" continues from here`,
+  );
+  return kept.join('\n');
+}
+
+/** 이어보기 시작 위치 (FWL-076). ref index는 DOM이 같으면 세대가 바뀌어도 같다 — 못 찾으면 처음부터 */
+function startAfter(lines: ReadonlyArray<Line>, after: Ref | undefined): number {
+  if (after === undefined) return 0;
+  const parsed = parseRef(after);
+  if (parsed === null) return 0;
+  return lines.findIndex((l) => l.kind === 'el' && parseRef(l.ref)?.index === parsed.index) + 1;
 }
 
 /**
@@ -402,5 +467,6 @@ export async function buildSnapshot(
   await renderFrame(page.mainFrame(), refs, 0, lines, scope, true);
   const raw = opts.raw === true;
   const chosen = raw ? lines : leanLines(lines);
-  return serialize({ gen, pages, url: page.url(), tree: formatLines(chosen, !raw) });
+  const tree = fitBudget(formatLines(chosen.slice(startAfter(chosen, opts.after)), !raw));
+  return serialize({ gen, pages, url: page.url(), tree });
 }

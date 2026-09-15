@@ -57,6 +57,7 @@ beforeAll(async () => {
     <div id="popup" style="cursor:pointer"><span>추가금액 없이</span> 구매하기</div>
     <div style="cursor:pointer"><button>카드 안의 버튼</button> 카드 설명</div>
     <div id="popup-status"></div>
+    <div id="card-select" style="cursor:pointer">카드를 선택해주세요<ul><li>신한카드</li><li>KB국민카드</li><li>BC카드(페이북)</li><li>현대카드</li><li>롯데카드</li><li>하나카드</li><li>삼성카드</li><li>우리카드</li><li>씨티카드</li><li>NH카드</li><li>카카오뱅크카드</li></ul></div>
     <div role="button" tabindex="0" id="cart-area">장바구니 영역 <button>장바구니 담기</button> <button>바로구매</button></div>
     <a href="/vp/products/1?token=abc" target="_blank">상세 보기</a>
     <a href="${originOf(pgServer)}/outside">외부 링크</a>
@@ -136,8 +137,12 @@ describe('snapshot — 규칙 1', () => {
   it('속성 없는 cursor:pointer div가 clickable로 잡히고 click이 동작한다 (FWL-029)', async () => {
     let snap = await target.snapshot(sid);
     const clickables = snap.tree.split('\n').filter((l) => l.includes('- clickable "'));
-    // 바깥 div 하나만 — 안의 span은 따로 잡지 않고, 정식 버튼을 품은 카드도 잡지 않는다
-    expect(clickables).toEqual([expect.stringContaining('- clickable "추가금액 없이 구매하기" [ref=')]);
+    // 바깥 div 하나만 — 안의 span은 따로 잡지 않고, 정식 버튼을 품은 카드도 잡지 않는다.
+    // 드롭다운도 바깥 한 줄뿐이다: 안쪽 항목은 ref 슬라이스에서만 풀린다 (FWL-077)
+    expect(clickables).toEqual([
+      expect.stringContaining('- clickable "추가금액 없이 구매하기" [ref='),
+      expect.stringContaining('- clickable "카드를 선택해주세요신한카드'),
+    ]);
     expect(snap.tree).toContain('- button "카드 안의 버튼" [ref=');
     await target.act(sid, { kind: 'click', ref: refOf(snap.tree, 'clickable', '추가금액 없이 구매하기') });
     snap = await target.snapshot(sid);
@@ -158,6 +163,31 @@ describe('snapshot — 규칙 1', () => {
     await target.act(sid, { kind: 'fill', ref: refOf(snap.tree, 'textbox', '비밀번호'), value: 'xy' });
     snap = await target.snapshot(sid);
     expect(snap.tree).toContain('- textbox "비밀번호 확인" [disabled] [ref='); // 2자 → 다시 잠긴다 = 값이 교체됐다
+  }, 30_000);
+
+  it('접힌 클릭 대상이 삼킨 목록은 ref 슬라이스에서 항목마다 줄과 ref로 풀린다 (FWL-077)', async () => {
+    const refFrom = (tree: string, needle: string): Ref => {
+      const m = tree.split(/\r?\n/).find((l) => l.includes(needle))?.match(/\[ref=([^\]]+)\]/);
+      if (!m) throw new Error(`ref not found: ${needle}`);
+      return m[1] as Ref;
+    };
+    // 기본 트리: 항목 열한 개가 부모 한 줄의 이름으로 이어붙고, 60자에서 잘려 뒤쪽 항목은 이름만으로 확인이 안 된다
+    const snap = await target.snapshot(sid);
+    const swallowed = snap.tree.split(/\r?\n/).find((l) => l.includes('카드를 선택해주세요'));
+    expect(swallowed).toContain('- clickable "카드를 선택해주세요신한카드KB국민카드');
+    expect(swallowed).toContain('…');
+    expect(snap.tree).not.toContain('"카카오뱅크카드"');
+
+    // raw로도 안 풀린다 — raw는 수집이 아니라 출력만 바꾼다. 수집에서 빠진 항목은 어떤 모드로도 안 나온다
+    const rawSnap = await target.snapshot(sid, { raw: true });
+    expect(rawSnap.tree).not.toContain('"카카오뱅크카드"');
+
+    const latest = await target.snapshot(sid);
+    const sliced = await target.snapshot(sid, { ref: refFrom(latest.tree, '카드를 선택해주세요') });
+    expect(sliced.tree).toContain('- clickable "신한카드"');
+    expect(sliced.tree).toContain('- clickable "카카오뱅크카드"');
+    const refs = [...sliced.tree.matchAll(/\[ref=([^\]]+)\]/g)].map((m) => m[1]);
+    expect(new Set(refs).size).toBe(refs.length); // 항목마다 제 ref다
   }, 30_000);
 
   it('fill 이후에도 값은 스냅샷에 나타나지 않는다', async () => {
@@ -427,4 +457,44 @@ describe('page_image (FWL-062) — 규칙 1의 경계선을 픽셀에도 긋는�
     expect(at(150, 20)).toBe('255,0,255'); // 최상위 입력창 (0,0)~(300,40)
     expect(at(150, 60)).toBe('255,0,255'); // iframe 안의 카드 입력창 (0,40)~(300,80)
   }, 60_000);
+});
+
+/**
+ * 트리 예산 (FWL-076). 별도 픽스처를 쓰는 이유: 예산을 넘기려면 줄이 수천 개 있어야 한다.
+ */
+describe('page_tree 예산 (FWL-076) — 잘려도 몇 줄이 남았는지와 이어보는 법이 트리 안에 있다', () => {
+  const bsid = 's_big' as SessionId;
+  let bigServer: Server;
+
+  beforeAll(async () => {
+    const rows = Array.from({ length: 900 }, (_, i) => `<a href="/g/${i}">상품 ${i} 아주 좋은 상품입니다 어서오세요</a>`).join('');
+    bigServer = await serve(`<h1>큰 목록</h1>${rows}`);
+    await target.open(bsid, { origin: originOf(bigServer), kind: 'browser', browser: 'chromium', headless: true });
+    await target.act(bsid, { kind: 'navigate', url: `${originOf(bigServer)}/` });
+  }, 60_000);
+
+  afterAll(async () => {
+    await target.close(bsid).catch(() => {});
+    bigServer?.close();
+  });
+
+  it('예산을 넘으면 줄 경계에서 끊고 이어보기 ref를 남긴다 — 이어받으면 끊긴 다음 줄부터 온다', async () => {
+    const snap = await target.snapshot(bsid);
+    expect(snap.tree.length).toBeLessThanOrEqual(30_000);
+
+    const lastLine = snap.tree.split(/\r?\n/).at(-1) ?? '';
+    expect(lastLine).toMatch(/^- … \d+ more lines did not fit — page_tree with after "\d+:e\d+" continues from here$/);
+
+    const after = (/after "([^"]+)"/.exec(lastLine)?.[1] ?? '') as Ref;
+    const next = await target.snapshot(bsid, { after });
+    // 이어보기의 첫 줄은 끊긴 자리 바로 다음 요소다 — 겹치지도, 건너뛰지도 않는다
+    const cutIndex = Number(/e(\d+)/.exec(after)?.[1]);
+    const firstIndex = Number(/\[ref=\d+:e(\d+)\]/.exec(next.tree.split(/\r?\n/)[0] ?? '')?.[1]);
+    expect(firstIndex).toBe(cutIndex + 1);
+  }, 60_000);
+
+  it('예산 안에 드는 페이지는 안내 줄이 붙지 않는다 — 기존 동작 그대로', async () => {
+    const snap = await target.snapshot(sid);
+    expect(snap.tree).not.toContain('more lines did not fit');
+  }, 30_000);
 });
