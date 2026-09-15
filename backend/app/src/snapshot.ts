@@ -116,6 +116,10 @@ const COLLECT = `
     }
     return null;
   };
+  // 입력 가능 여부 (FWL-075) — 값이 아니라 상태다. disabled 칸은 fill도 click도 element_not_actionable로 끝나는데,
+  // 트리에 표시가 없으면 에이전트는 "칸이 있는데 왜 안 되지"만 보고 되풀이한다 (교보문고 가입 폼 실측 2026-09-15)
+  const disabledOf = (el) => el.disabled === true || el.getAttribute('aria-disabled') === 'true';
+  const readonlyOf = (el) => el.readOnly === true || el.getAttribute('aria-readonly') === 'true';
   // 링크의 같은 origin 경로 — origin과 쿼리스트링을 뗀 pathname만 (쿼리에 토큰이 실릴 수 있다). 다른 origin·javascript:는 null
   const hrefOf = (el) => {
     if (el.tagName !== 'A') return null;
@@ -170,13 +174,13 @@ const COLLECT = `
     if (!hit) accepted.add(el);
     if (visible(el)) {
       out.push(el);
-      meta.push({ role, name: nameOf(el), checked: stateOf(el, role), href: hrefOf(el), inside: inside(el), footer: inFooter(el), inAction: role === 'img' && inAction(el) });
+      meta.push({ role, name: nameOf(el), checked: stateOf(el, role), disabled: disabledOf(el), readonly: readonlyOf(el), href: hrefOf(el), inside: inside(el), footer: inFooter(el), inAction: role === 'img' && inAction(el) });
       continue;
     }
     const label = labelTargetOf(el);
     if (!label) continue;
     out.push(label);
-    meta.push({ role, name: clean(safeText(label)), checked: stateOf(el, role), href: null, inside: inside(el) || inside(label), footer: inFooter(label), inAction: false });
+    meta.push({ role, name: clean(safeText(label)), checked: stateOf(el, role), disabled: disabledOf(el), readonly: readonlyOf(el), href: null, inside: inside(el) || inside(label), footer: inFooter(label), inAction: false });
   }
   if (!wantText) return { els: out, meta, texts: [] };
   // 이름을 가져간 요소 — 그 안의 텍스트는 이미 요소 줄로 나왔으니 다시 내지 않는다.
@@ -240,6 +244,9 @@ type ElLine = {
   readonly role: string;
   readonly name: string;
   readonly checked: boolean | null;
+  /** 입력·클릭이 막힌 상태 (FWL-075) — 트리에 [disabled] / [readonly]로 나간다 */
+  readonly disabled: boolean;
+  readonly readonly: boolean;
   readonly href: string | null;
   readonly ref: Ref;
   readonly footer: boolean;
@@ -267,6 +274,8 @@ async function renderFrame(frame: Frame, refs: RefTable, depth: number, lines: L
     role: string;
     name: string;
     checked: boolean | null;
+    disabled: boolean;
+    readonly: boolean;
     href: string | null;
     inside: boolean;
     footer: boolean;
@@ -287,7 +296,7 @@ async function renderFrame(frame: Frame, refs: RefTable, depth: number, lines: L
     const ref = refs.put({ handle, role: m.role, name: m.name });
     if (!emit || !m.inside) continue;
     if (scope.interactiveOnly && !INTERACTIVE_ROLES.has(m.role)) continue;
-    lines.push({ kind: 'el', depth, role: m.role, name: m.name, checked: m.checked, href: m.href, ref, footer: m.footer, inAction: m.inAction });
+    lines.push({ kind: 'el', depth, role: m.role, name: m.name, checked: m.checked, disabled: m.disabled, readonly: m.readonly, href: m.href, ref, footer: m.footer, inAction: m.inAction });
   }
 
   for (const { t, footer } of texts) lines.push({ kind: 'text', depth, text: t, footer });
@@ -369,7 +378,7 @@ function formatLines(lines: ReadonlyArray<Line>, fold: boolean): string {
         continue;
       }
     }
-    const state = l.checked === null ? '' : l.checked ? ' [checked]' : ' [unchecked]';
+    const state = (l.checked === null ? '' : l.checked ? ' [checked]' : ' [unchecked]') + (l.disabled ? ' [disabled]' : '') + (l.readonly ? ' [readonly]' : '');
     const href = l.href === null ? '' : ` href=${l.href}`;
     out.push(`${pad}- ${l.role} "${l.name}"${state} [ref=${l.ref}]${href}`);
   }
