@@ -273,6 +273,19 @@ describe('/vault/* 인증', () => {
     expect(bad.status).toBe(400);
   });
 
+  it('label — 값 없이 이름만 바꾼다, 없는 키는 404, 빈 이름은 400 (FWL-078)', async () => {
+    const token = await login();
+    await post('/vault/set', { passphrase: 'pp', key: 'card.personal.number', type: 'card', value: '4111111111111111' }, token);
+    const r = await post('/vault/label', { key: 'card.personal.number', label: '카카오뱅크' }, token); // 패스프레이즈 없이
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ ok: true, key: 'card.personal.number', label: '카카오뱅크' });
+    // 이름만 바뀌고 값은 그대로다 — len이 증인이다
+    const list = await post('/vault/list', { passphrase: 'pp' }, token);
+    expect(list.body['keys']).toContainEqual({ name: 'card.personal.number', type: 'card', len: 16, grant: false, label: '카카오뱅크' });
+    expect((await post('/vault/label', { key: 'no.such.key', label: 'x' }, token)).status).toBe(404);
+    expect((await post('/vault/label', { key: 'card.personal.number', label: '  ' }, token)).status).toBe(400);
+  });
+
   it('rm — 있으면 200, 없으면 404', async () => {
     const token = await login();
     await post('/vault/set', { passphrase: 'pp', key: 'tmp.k.key', type: 'text', value: 'v' }, token);
