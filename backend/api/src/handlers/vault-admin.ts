@@ -143,6 +143,28 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
       return { ok: true, key, grant };
     },
 
+    /**
+     * 이름만 바꾼다 (FWL-078) — 값도 패스프레이즈도 다시 받지 않는다.
+     * 표시용 이름 하나 고치자고 카드번호를 또 손에 쥐게 하는 건, 값이 다뤄지는 횟수만 늘린다.
+     * grant 토글과 같은 모양이다: 열려 있는 금고의 메모리 패스프레이즈로 항목 한 칸만 고쳐 쓴다
+     */
+    async label(caller: Caller, passphrase: string, key: string, label: string): Promise<Result<{ key: string; label: string }>> {
+      try {
+        const entries = entriesNow(passphrase);
+        const current = entries.get(key);
+        if (current === undefined) return fail('key_not_found', 'not in vault');
+        entries.set(key, { ...current, label });
+        writeVaultFile(vaultFile, passphrase, entries, cipher);
+        knownMtimeMs = mtimeNow();
+        vault.applyWrite(entries);
+      } catch {
+        log(caller, 'vault_set', key, false);
+        return fail('vault_locked', 'wrong passphrase or account mismatch');
+      }
+      log(caller, 'vault_set', key, true);
+      return { ok: true, key, label };
+    },
+
     /** 이름 없는 항목에 이름을 지어 넣는다. 백업을 먼저 만든다 (FWL-056) */
     async seedLabels(caller: Caller, passphrase: string): Promise<Result<{ seeded: Array<{ key: string; label: string }> }>> {
       let result: ReturnType<typeof seedLabels>;
