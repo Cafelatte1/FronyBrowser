@@ -60,6 +60,10 @@ beforeAll(async () => {
     <div role="button" tabindex="0" id="cart-area">장바구니 영역 <button>장바구니 담기</button> <button>바로구매</button></div>
     <a href="/vp/products/1?token=abc" target="_blank">상세 보기</a>
     <a href="${originOf(pgServer)}/outside">외부 링크</a>
+    <label>비밀번호 <input id="pw" type="password"></label>
+    <label>비밀번호 확인 <input id="pw2" type="password" disabled></label>
+    <label>읽기전용 <input id="ro" readonly></label>
+    <button disabled>가입하기</button>
     <a href="/goods/1">상품A</a><img alt="상품A" src="data:,"><img alt="" src="data:,">
     <a href="/goods/2">상품B<img alt="최대 500원 적립" src="data:,"></a><img alt="배송 아이콘" src="data:,">
     <div id="scrollbox" style="height:60px;overflow:auto" onscroll="document.getElementById('scroll-status').textContent='컨테이너 스크롤됨'"><div style="height:400px"></div><button>깊은 버튼</button></div>
@@ -69,6 +73,8 @@ beforeAll(async () => {
     <p>배송은 보통 이틀 걸립니다</p>
     <footer><a href="/terms">이용약관</a><p>사업자등록번호 000-00-00000</p></footer>
     <script>
+      // keyup에 걸린 규칙 검사 — Playwright fill()로는 절대 안 풀리고 실제 타이핑으로만 풀린다 (FWL-075)
+      document.getElementById('pw').addEventListener('keyup', (e) => { document.getElementById('pw2').disabled = e.target.value.length < 4; });
       document.addEventListener('click', (e) => {
         if (e.target.closest('#popup')) document.getElementById('popup-status').textContent = '팝업 통과';
       });
@@ -136,6 +142,22 @@ describe('snapshot — 규칙 1', () => {
     await target.act(sid, { kind: 'click', ref: refOf(snap.tree, 'clickable', '추가금액 없이 구매하기') });
     snap = await target.snapshot(sid);
     expect(snap.tree).toContain('- text "팝업 통과"'); // 클릭 결과는 기본 출력에 있어야 한다 (FWL-059)
+  }, 30_000);
+
+  it('disabled·readonly가 트리에 보이고, 실제 타이핑이 keyup 검사를 통과시켜 다음 칸을 연다 (FWL-075)', async () => {
+    let snap = await target.snapshot(sid);
+    expect(snap.tree).toContain('- textbox "비밀번호 확인" [disabled] [ref=');
+    expect(snap.tree).toContain('- textbox "읽기전용" [readonly] [ref=');
+    expect(snap.tree).toContain('- button "가입하기" [disabled] [ref=');
+    await target.act(sid, { kind: 'fill', ref: refOf(snap.tree, 'textbox', '비밀번호'), value: 'abcd1234' });
+    snap = await target.snapshot(sid);
+    expect(snap.tree).toContain('- textbox "비밀번호 확인" [ref=');
+    expect(snap.tree).not.toContain('- textbox "비밀번호 확인" [disabled]');
+    await target.act(sid, { kind: 'fill', ref: refOf(snap.tree, 'textbox', '비밀번호 확인'), value: 'abcd1234' });
+    // 다시 채우면 덧붙지 않고 바꾼다 — 타이핑 전에 비운다
+    await target.act(sid, { kind: 'fill', ref: refOf(snap.tree, 'textbox', '비밀번호'), value: 'xy' });
+    snap = await target.snapshot(sid);
+    expect(snap.tree).toContain('- textbox "비밀번호 확인" [disabled] [ref='); // 2자 → 다시 잠긴다 = 값이 교체됐다
   }, 30_000);
 
   it('fill 이후에도 값은 스냅샷에 나타나지 않는다', async () => {

@@ -265,10 +265,14 @@ export function createPlaywrightTarget(pool: BrowserPool, opts: PlaywrightTarget
         case 'fill': {
           const entry = entryOf(s, intent.ref);
           role = entry.role;
-          await guarded(
-            () => (entry.handle as unknown as ElementHandle).fill(intent.value, { timeout }),
-            'element_not_actionable',
-          );
+          // 실제 키 입력으로 넣는다 (FWL-075). fill()은 값만 바꾸고 input/change만 쏘는데, 사이트의 규칙 검사와
+          // "다음 칸 활성화"가 keyup에 걸린 경우(교보문고 가입 폼 실측 2026-09-15) 그 칸이 disabled로 남는다.
+          // 타이핑은 덧붙이므로 먼저 비운다. 값은 여전히 이 프로세스 → CDP 키 이벤트로만 나간다
+          await guarded(async () => {
+            const h = entry.handle as unknown as ElementHandle;
+            await h.fill('', { timeout });
+            await h.type(intent.value, { timeout }); // ElementHandle에는 pressSequentially가 없다 — 같은 동작의 옛 이름
+          }, 'element_not_actionable');
           break;
         }
         case 'keypad': {
