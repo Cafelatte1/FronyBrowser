@@ -182,7 +182,9 @@ function rowsOf(id: string): Row[] {
     return section.fields.map((f) => {
       const info = existing.get(f.key);
       return {
-        key: f.key, type: f.type, label: f.label, field: f, secret: f.secret === true,
+        // 이미 등록된 키는 서버에 저장된 이름이 진실이다 (FWL-079). 스키마의 이름은 아직 없는 행의 기본값일 뿐이라,
+        // 이걸 안 보면 운영자가 바꾼 이름이 콘솔에 안 뜨고 다음 저장 때 스키마 이름으로 되돌아간다
+        key: f.key, type: f.type, label: info && info.label !== '' ? info.label : f.label, field: f, secret: f.secret === true,
         registered: info !== undefined,
         grant: info ? info.grant : grantDraft.get(f.key) ?? f.grant === true,
       };
