@@ -36,6 +36,11 @@ export type SafeSnapshot = Brand<SnapshotBody, 'SafeSnapshot'>;
 export type SnapshotOptions = {
   readonly ref?: Ref;
   readonly filter?: 'interactive';
+  /**
+   * 잘린 트리를 이 ref 다음 줄부터 이어 받는다 (FWL-076). 잘림 안내 줄이 알려준 ref를 그대로 넣는다.
+   * 세대가 아니라 index로 맞추므로 새 스냅샷에서도 같은 자리를 가리킨다 — DOM이 바뀌었으면 처음부터 준다
+   */
+  readonly after?: Ref;
   /** true면 lean 전처리 없이 전부 (FWL-044). 기본은 lean — 이름 없는 img·푸터·이미 요소 이름으로 나온 텍스트를 빼고 빈 이름 연속을 접는다 */
   readonly raw?: boolean;
 };

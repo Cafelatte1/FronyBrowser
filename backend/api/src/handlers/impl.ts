@@ -289,6 +289,7 @@ export function createHandlers(deps: HandlerDeps) {
           pages: snap.pages,
           slice: opts.ref !== undefined ? 'ref' : (opts.filter ?? null), // 어떤 슬라이스였는지만 — ref 문자열은 값이 아니지만 남길 이유도 없다
           raw: opts.raw === true,
+          chars: snap.tree.length, // 트리가 예산에 닿는 페이지가 실제로 얼마나 되는지 (FWL-076). 길이지 내용이 아니다
         });
         return { ok: true, snapshot: snap };
       } catch (e) {
