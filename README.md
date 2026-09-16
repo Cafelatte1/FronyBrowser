@@ -56,7 +56,7 @@ claude mcp add --transport http FronyBrowser http://<server>:9420/mcp --header "
 ```
 
 Put values in the vault from the GUI at `http://<server>:9420/` or the CLI, then unlock
-it once per server start (the GUI's "등록 현황 불러오기 · 서버 보관함 열기" button does the same as the CLI):
+it once per server start (the GUI's "Open vault" button does the same as the CLI):
 
 ```powershell
 npm run wallet -- set card.personal.number --type card
