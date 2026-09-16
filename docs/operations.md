@@ -8,7 +8,7 @@
 
 ## Host
 
-Home server reachable over Tailscale, single port `9420` for everything (MCP, internal routes, static GUI, health). FronyAuth (introspection dependency) is a separate service reached through `FRONY_AUTH_URL`; a server without one runs on a static key list instead (`WALLET_KEYS`, see "Static keys" below). The browser profile is chosen per session by the caller: patchright Chromium headless by default, system Chrome headful for a site whose bot manager blocks headless and automation fingerprints.
+Home server reachable over Tailscale, single port `9420` for everything (MCP, internal routes, the static console, health). FronyAuth (introspection dependency) is a separate service reached through `FRONY_AUTH_URL`; a server without one runs on a static key list instead (`WALLET_KEYS`, see "Static keys" below). The browser profile is chosen per session by the caller: patchright Chromium headless by default, system Chrome headful for a site whose bot manager blocks headless and automation fingerprints.
 
 ## Launcher and environment
 
