@@ -21,6 +21,8 @@ export type McpDeps = {
   readonly handlers: Handlers;
   readonly vault: Vault;
   readonly audit: Audit;
+  /** initialize 응답에 실리는 버전 — 배포 package.json의 값이다 (FWL-084) */
+  readonly version: string;
 };
 
 export const INSTRUCTIONS = `FronyBrowser is a secure browser. It fills personal data (card numbers, login passwords, payment PINs) from a server-side vault by key name: you send "{{vault:key}}" placeholders and never see, receive, or need the value.
@@ -35,7 +37,7 @@ const sessionId = z.string().describe('Session id returned by session_begin.');
 const ref = z.string().describe('Element ref from the latest page_tree, e.g. "7:e42". Not a CSS selector; refs expire on the next page_tree.');
 
 export function buildMcpServer(deps: McpDeps, caller: Caller): McpServer {
-  const server = new McpServer({ name: 'FronyBrowser', version: '0.1.0' }, { instructions: INSTRUCTIONS });
+  const server = new McpServer({ name: 'FronyBrowser', version: deps.version }, { instructions: INSTRUCTIONS });
 
   function out<T>(handler: string, result: Result<T>, url: string | null = null) {
     const scrubbed = scrub(result, egressContext(deps.vault, deps.audit, handler, url));
