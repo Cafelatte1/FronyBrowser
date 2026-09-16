@@ -1,43 +1,11 @@
 {
   "name": "fronybrowser",
   "version": "0.37.1",
-  "description": "Browser automation MCP server for AI agents: card numbers and passwords are filled by key name, so the value never reaches the agent",
-  "mcpName": "io.github.Cafelatte1/fronybrowser",
-  "license": "MIT",
-  "author": "Cafelatte1",
-  "homepage": "https://github.com/Cafelatte1/FronyBrowser",
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/Cafelatte1/FronyBrowser.git"
-  },
-  "bugs": {
-    "url": "https://github.com/Cafelatte1/FronyBrowser/issues"
-  },
-  "keywords": [
-    "mcp",
-    "mcp-server",
-    "browser-automation",
-    "playwright",
-    "vault",
-    "pii"
-  ],
+  "private": true,
   "type": "module",
-  "os": [
-    "win32"
-  ],
   "engines": {
     "node": ">=20"
   },
-  "bin": {
-    "fronybrowser": "backend/api/dist/server.js",
-    "wallet": "backend/cli/dist/cli.js"
-  },
-  "files": [
-    "backend/api/dist/server.js",
-    "backend/cli/dist/cli.js",
-    "frontend/dist",
-    "docs"
-  ],
   "workspaces": [
     "backend/core",
     "backend/app",
@@ -47,8 +15,6 @@
   ],
   "scripts": {
     "build": "tsc --build && npm run -w frontend build",
-    "bundle": "node scripts/bundle.mjs",
-    "prepack": "npm run build && npm run bundle",
     "clean": "tsc --build --clean",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -58,16 +24,9 @@
     "test:integration": "vitest run --project integration",
     "test:live": "cross-env WALLET_LIVE=1 vitest run --project live"
   },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.0",
-    "patchright": "^1.62.3",
-    "pngjs": "^7.0.0",
-    "zod": "^4.5.4"
-  },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "cross-env": "^10.1.0",
-    "esbuild": "^0.21.5",
     "jsdom": "^30.0.1",
     "tsx": "^4.23.13",
     "typescript": "^5.7.2",

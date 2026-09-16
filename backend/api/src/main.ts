@@ -200,8 +200,8 @@ function main(): void {
 
   const vaultAdmin = createVaultAdmin({ vaultFile, sessionsDir, vault, audit });
   const staticDir = fileURLToPath(new URL('../../../frontend/dist', import.meta.url));
-  // MCP가 자기 소개에 쓰는 버전 (FWL-084). 배포 package.json 하나가 출처다 — 소스 트리와 번들 배포물의
-  // 깊이가 같으므로 같은 상대 경로로 읽힌다 (staticDir와 같은 이유로 출력 위치가 정해져 있다)
+  // MCP가 initialize에서 자기 소개에 쓰는 버전. 저장소 package.json 하나가 출처다 — 예전엔 소스에
+  // 0.1.0이 박혀 있어 릴리스 태그(v0.37.x)와 따로 놀았고, 클라이언트가 보는 값이 그 0.1.0이었다
   const version = JSON.parse(readFileSync(fileURLToPath(new URL('../../../package.json', import.meta.url)), 'utf8')).version as string;
 
   console.log(`vault unlock TTL: ${Math.round(unlockTtlMs / 60_000)}m`);
