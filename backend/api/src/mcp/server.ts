@@ -21,7 +21,7 @@ export type McpDeps = {
   readonly handlers: Handlers;
   readonly vault: Vault;
   readonly audit: Audit;
-  /** initialize 응답에 실리는 버전 — 배포 package.json의 값이다 (FWL-084) */
+  /** initialize 응답에 실리는 버전 — 저장소 package.json의 값이다 */
   readonly version: string;
 };
 

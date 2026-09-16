@@ -61,7 +61,7 @@ export type HttpDeps = {
   readonly publicUrl?: string;
   /** FronyAuth 퍼블릭 도메인 — 메타데이터의 authorization_servers */
   readonly authIssuer?: string;
-  /** MCP initialize가 알리는 서버 버전 (FWL-084). 엔트리가 package.json에서 읽어 넣는다 — 테스트는 넣지 않는다 */
+  /** MCP initialize가 알리는 서버 버전. 엔트리가 package.json에서 읽어 넣는다 — 테스트는 넣지 않는다 */
   readonly version?: string;
 };
 
