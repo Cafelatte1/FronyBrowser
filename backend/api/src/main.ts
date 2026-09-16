@@ -19,6 +19,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPlaywrightTarget, createBrowserPool, hasStorageState, mergeStorageStates, persistStorageStates } from '@wallet/app';
@@ -199,13 +200,16 @@ function main(): void {
 
   const vaultAdmin = createVaultAdmin({ vaultFile, sessionsDir, vault, audit });
   const staticDir = fileURLToPath(new URL('../../../frontend/dist', import.meta.url));
+  // MCP가 자기 소개에 쓰는 버전 (FWL-084). 배포 package.json 하나가 출처다 — 소스 트리와 번들 배포물의
+  // 깊이가 같으므로 같은 상대 경로로 읽힌다 (staticDir와 같은 이유로 출력 위치가 정해져 있다)
+  const version = JSON.parse(readFileSync(fileURLToPath(new URL('../../../package.json', import.meta.url)), 'utf8')).version as string;
 
   console.log(`vault unlock TTL: ${Math.round(unlockTtlMs / 60_000)}m`);
   console.log(`session TTL: ${Math.round(sessionTtlMs / 1000)}s, max sessions: ${maxSessions}, browser idle: ${Math.round(browserIdleMs / 1000)}s`);
   if (local) console.log('local mode: no auth, loopback only (WALLET_LOCAL=1)');
   const publicUrl = process.env['WALLET_PUBLIC_URL']?.replace(/\/$/, '') || undefined;
   const deps = {
-    handlers, vault, audit, verify, local, adminClients, vaultAdmin, verifyAdmin, staticDir, vaultFile, testMode, unlockTtlMs,
+    handlers, vault, audit, verify, local, adminClients, vaultAdmin, verifyAdmin, staticDir, vaultFile, testMode, unlockTtlMs, version,
     serviceKey: auth?.serviceKey, publicUrl, authIssuer: auth?.authIssuer, guiSessions: createGuiSessions(),
   };
   const server = createHttpServer(deps);

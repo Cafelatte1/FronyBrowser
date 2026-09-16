@@ -61,6 +61,8 @@ export type HttpDeps = {
   readonly publicUrl?: string;
   /** FronyAuth 퍼블릭 도메인 — 메타데이터의 authorization_servers */
   readonly authIssuer?: string;
+  /** MCP initialize가 알리는 서버 버전 (FWL-084). 엔트리가 package.json에서 읽어 넣는다 — 테스트는 넣지 않는다 */
+  readonly version?: string;
 };
 
 /** RFC 9728 §3.1: `.well-known`은 호스트 바로 뒤, 서비스 접두는 그 뒤에 — Funnel이 접두를 벗기므로 서버 자신은 항상 이 경로로 본다 */
@@ -199,7 +201,7 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
     if (!caller) return;
     // stateless 모드 — wallet 세션은 MCP 전송 세션이 아니라 session_begin 도구가 관리한다
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-    const server = buildMcpServer({ handlers: deps.handlers, vault: deps.vault, audit: deps.audit }, caller);
+    const server = buildMcpServer({ handlers: deps.handlers, vault: deps.vault, audit: deps.audit, version: deps.version ?? '0.0.0-dev' }, caller);
     await server.connect(transport);
     res.on('close', () => {
       void transport.close();

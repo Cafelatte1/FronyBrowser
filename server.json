@@ -1,0 +1,44 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.Cafelatte1/fronybrowser",
+  "title": "FronyBrowser",
+  "description": "Browser automation for AI agents: fills card numbers and passwords by key name, never the value",
+  "repository": {
+    "url": "https://github.com/Cafelatte1/FronyBrowser",
+    "source": "github"
+  },
+  "websiteUrl": "https://github.com/Cafelatte1/FronyBrowser",
+  "version": "0.37.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "fronybrowser",
+      "version": "0.37.1",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "streamable-http",
+        "url": "http://127.0.0.1:{WALLET_PORT}/mcp"
+      },
+      "environmentVariables": [
+        {
+          "name": "WALLET_LOCAL",
+          "description": "Set to 1 to run without an authentication service, on loopback only — the single-machine setup",
+          "default": "1",
+          "isRequired": true
+        },
+        {
+          "name": "WALLET_PORT",
+          "description": "Port the server listens on",
+          "default": "9420",
+          "isRequired": false
+        },
+        {
+          "name": "WALLET_DATA_DIR",
+          "description": "Data root holding the encrypted vault, login sessions and the audit log; default is Frony/FronyBrowser/data under LOCALAPPDATA",
+          "isRequired": false
+        }
+      ]
+    }
+  ]
+}
