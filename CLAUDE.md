@@ -86,7 +86,7 @@ Dependency direction is `api → app → core`; never the reverse.
 
 ## Deploy
 
-Runs on the operator's home server (Tailscale address, port `9420`, one process for MCP, internal routes and the approval page) as the Task Scheduler task "FronyBrowser Server". The task is interactive-logon only (a session opened with `headless: false` needs a window), so after a reboot the server starts once the account logs on. Bearer tokens are verified by FronyAuth introspection (`FRONY_AUTH_URL`); the vault is locked after every restart until `wallet unlock`.
+Runs on the operator's home server (Tailscale address, port `9420`, one process for MCP, internal routes and the approval page) as the Task Scheduler task "FronyBrowser Server", started at boot as the service account with S4U logon. It ran at interactive logon until 2026-09-16, on the belief that DPAPI and headful Chrome both needed a real desktop session; measured that day, neither does, and the cost was that an unattended reboot left the server down entirely. Bearer tokens are verified by FronyAuth introspection (`FRONY_AUTH_URL`); the vault is locked after every restart until `wallet unlock`.
 Release tags only (`vX.Y.Z`); pushing to main changes nothing.
 Procedure: push the tag, then on the server run `scripts\deploy.ps1 -Tag vX.Y.Z`; verify `/health` and that nothing listens on `0.0.0.0`. Details in [docs/operations.md](docs/operations.md).
 
