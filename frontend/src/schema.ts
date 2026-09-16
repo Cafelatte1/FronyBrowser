@@ -12,8 +12,9 @@ export type FieldDef = {
   /** pay grant가 있어야만 입력되는 키 — 금고 항목에 그대로 저장된다 */
   grant?: boolean;
 };
+/** id는 그 섹션 키들의 그룹 이름과 같아야 한다 (FWL-080) — 레일의 한 줄이 곧 한 그룹이다 */
 export type SectionDef = { id: string; title: string; blurb: string; fields: FieldDef[] };
-export type KeyInfo = { name: string; type: string; len: number; grant: boolean; label: string };
+export type KeyInfo = { name: string; type: string; len: number; grant: boolean; public: boolean; label: string };
 
 /** 스키마 밖 그룹(사용자가 만든 그룹)의 설명 — 패널 머리에 그대로 쓴다 */
 export const CUSTOM_BLURB =
@@ -27,9 +28,16 @@ export const DATE = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
  */
 export const EXTRA_KEY = /^[a-z0-9-]+\.[a-z0-9-]+\.[a-z0-9-]+$/;
 
+/**
+ * public을 걸 수 있는 타입 (FWL-080). 서버 core의 PUBLIC_TYPES와 같은 목록을 여기서 다시 적는다 —
+ * 프론트엔드는 backend를 import하지 않고(규칙 12), EXTRA_KEY가 서버의 KEY_NAME을 그렇게 하듯이.
+ * 판정의 주인은 서버다: 화면은 걸 수 없는 줄에 체크를 안 그릴 뿐이고, 거절은 서버가 한다
+ */
+export const PUBLIC_TYPES = new Set(['text', 'name']);
+
 export const SECTIONS: SectionDef[] = [
   {
-    id: 'personal',
+    id: 'profile',
     title: 'Personal',
     blurb: 'Values leave this page only as a write. What comes back is a name, a type and a length — never the value, not to this page and not to an agent.',
     fields: [
@@ -66,6 +74,9 @@ export const SECTIONS: SectionDef[] = [
 ];
 
 export const SCHEMA_KEYS = new Set(SECTIONS.flatMap((s) => s.fields.map((f) => f.key)));
+
+/** 섹션이 이미 차지한 그룹 (FWL-080). 여기 속한 키는 사용자 그룹으로 또 세지 않는다 */
+export const SECTION_GROUPS = new Set(SECTIONS.map((s) => s.id));
 
 /** 형식이 틀린 항목의 안내 문구 목록. 비어 있으면 전부 통과 */
 export function checkFields(items: ReadonlyArray<{ field: FieldDef; value: string }>): string[] {

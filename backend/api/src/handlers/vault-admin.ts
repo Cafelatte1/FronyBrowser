@@ -9,7 +9,7 @@
 import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Audit, Cipher, Result, Vault, VaultEntry, ValueType } from '@wallet/core';
-import { VaultLockedError, defaultLabelFor, fail, migrateKeyNames, overviewVaultFile, readVaultFile, seedLabels, writeVaultFile } from '@wallet/core';
+import { PUBLIC_TYPES, VaultLockedError, defaultLabelFor, fail, migrateKeyNames, overviewVaultFile, readVaultFile, seedLabels, writeVaultFile } from '@wallet/core';
 import type { Caller } from './impl.js';
 
 /** 키 이름은 `그룹.대상.항목` 세 조각 고정 (FWL-057) — 검사는 서버가 한다. 콘솔·CLI 규칙과 같은 식이다 */
@@ -28,6 +28,17 @@ export type VaultAdminDeps = {
   readonly audit: Audit;
   readonly cipher?: Cipher;
 };
+
+/**
+ * public을 걸어도 되는 항목인지 (FWL-080). 운영자가 체크 하나로 값을 LLM 컨텍스트에 넣는 경로라,
+ * 사고가 나는 조합을 서버가 막는다 — 결심한 운영자를 막는 장치가 아니라 실수를 막는 장치다.
+ * grant 키는 결제 비밀번호고, card·rrn·phone·email·address는 타입 자체가 새면 안 되는 값의 범주다
+ */
+function publicRefusal(type: string, grant: boolean): string | null {
+  if (!PUBLIC_TYPES.has(type)) return `public needs type ${[...PUBLIC_TYPES].join(' or ')}`;
+  if (grant) return 'a grant key cannot be public';
+  return null;
+}
 
 /** 저장할 이름을 정한다: 보낸 값 > 이미 붙어 있던 이름 > 키에서 지어낸 기본값 */
 function labelOf(existing: ReadonlyMap<string, VaultEntry>, key: string, label?: string): string {
@@ -82,10 +93,11 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
       value: string,
       grant = false,
       label?: string,
-    ): Promise<Result<{ key: string; type: ValueType; len: number; grant: boolean; label: string }>> {
-      const r = await this.setMany(caller, passphrase, [{ key, type, value, grant, ...(label !== undefined ? { label } : {}) }]);
+      isPublic = false,
+    ): Promise<Result<{ key: string; type: ValueType; len: number; grant: boolean; public: boolean; label: string }>> {
+      const r = await this.setMany(caller, passphrase, [{ key, type, value, grant, public: isPublic, ...(label !== undefined ? { label } : {}) }]);
       if (!r.ok) return r;
-      const first = r.keys[0] as { key: string; type: ValueType; len: number; grant: boolean; label: string };
+      const first = r.keys[0] as { key: string; type: ValueType; len: number; grant: boolean; public: boolean; label: string };
       return { ok: true, ...first };
     },
 
@@ -93,14 +105,19 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
     async setMany(
       caller: Caller,
       passphrase: string,
-      items: ReadonlyArray<{ key: string; type: string; value: string; grant?: boolean; label?: string }>,
-    ): Promise<Result<{ keys: Array<{ key: string; type: ValueType; len: number; grant: boolean; label: string }> }>> {
+      items: ReadonlyArray<{ key: string; type: string; value: string; grant?: boolean; public?: boolean; label?: string }>,
+    ): Promise<Result<{ keys: Array<{ key: string; type: ValueType; len: number; grant: boolean; public: boolean; label: string }> }>> {
       if (items.length === 0) return fail('bad_request', 'no entries');
-      for (const { key, type, value, grant, label } of items) {
+      for (const { key, type, value, grant, public: isPublic, label } of items) {
         if (!KEY_NAME.test(key)) return fail('bad_request', 'key must be group.subject.field');
         if (!VALUE_TYPES.has(type)) return fail('bad_request', 'invalid type');
         if (value.length === 0) return fail('bad_request', 'empty value');
         if (grant !== undefined && typeof grant !== 'boolean') return fail('bad_request', 'invalid grant');
+        if (isPublic !== undefined && typeof isPublic !== 'boolean') return fail('bad_request', 'invalid public');
+        if (isPublic === true) {
+          const refusal = publicRefusal(type, grant === true);
+          if (refusal !== null) return fail('bad_request', refusal);
+        }
         if (label !== undefined && (typeof label !== 'string' || label.trim().length === 0 || label.trim().length > LABEL_MAX)) {
           return fail('bad_request', 'invalid label');
         }
@@ -109,8 +126,8 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
       try {
         // 이미 붙어 있는 이름을 지우지 않으려면 현재 항목을 먼저 읽어야 한다
         const existing = existsSync(vaultFile) ? entriesNow(passphrase) : new Map<string, VaultEntry>();
-        for (const { key, type, value, grant, label } of items) {
-          entries.push([key, { type: type as ValueType, value, grant: grant === true, label: labelOf(existing, key, label) }]);
+        for (const { key, type, value, grant, public: isPublic, label } of items) {
+          entries.push([key, { type: type as ValueType, value, grant: grant === true, public: isPublic === true, label: labelOf(existing, key, label) }]);
         }
         for (const [key, entry] of entries) existing.set(key, entry);
         writeVaultFile(vaultFile, passphrase, existing, cipher);
@@ -122,7 +139,7 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
         return fail('vault_locked', 'wrong passphrase or account mismatch');
       }
       for (const { key, value } of items) log(caller, 'vault_set', key, true, value.length);
-      return { ok: true, keys: entries.map(([key, e]) => ({ key, type: e.type, len: e.value.length, grant: e.grant, label: e.label })) };
+      return { ok: true, keys: entries.map(([key, e]) => ({ key, type: e.type, len: e.value.length, grant: e.grant, public: e.public, label: e.label })) };
     },
 
     /** 값을 다시 받지 않고 grant 플래그만 바꾼다 (FWL-056). 없는 키는 key_not_found */
@@ -131,6 +148,9 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
         const entries = entriesNow(passphrase);
         const current = entries.get(key);
         if (current === undefined) return fail('key_not_found', 'not in vault');
+        // 공개된 값에 grant를 거는 건 두 플래그를 동시에 켜는 일이다 (FWL-080) — 어느 쪽이 먼저든 같은 조합이므로
+        // 여기서도 막는다. 결제 비밀번호로 바꿀 항목이면 public을 먼저 끄는 게 순서다
+        if (grant && current.public) return fail('bad_request', 'a public key cannot need a grant');
         entries.set(key, { ...current, grant });
         writeVaultFile(vaultFile, passphrase, entries, cipher);
         knownMtimeMs = mtimeNow();
@@ -141,6 +161,31 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
       }
       log(caller, 'vault_set', key, true);
       return { ok: true, key, grant };
+    },
+
+    /**
+     * 값을 다시 받지 않고 public 플래그만 바꾼다 (FWL-080). grant 토글과 같은 모양이다.
+     * 켜는 쪽은 publicRefusal을 통과해야 한다 — 이미 저장된 항목의 타입·grant를 기준으로 본다
+     */
+    async setPublic(caller: Caller, passphrase: string, key: string, isPublic: boolean): Promise<Result<{ key: string; public: boolean }>> {
+      try {
+        const entries = entriesNow(passphrase);
+        const current = entries.get(key);
+        if (current === undefined) return fail('key_not_found', 'not in vault');
+        if (isPublic) {
+          const refusal = publicRefusal(current.type, current.grant);
+          if (refusal !== null) return fail('bad_request', refusal);
+        }
+        entries.set(key, { ...current, public: isPublic });
+        writeVaultFile(vaultFile, passphrase, entries, cipher);
+        knownMtimeMs = mtimeNow();
+        vault.applyWrite(entries);
+      } catch {
+        log(caller, 'vault_set', key, false);
+        return fail('vault_locked', 'wrong passphrase or account mismatch');
+      }
+      log(caller, 'vault_set', key, true);
+      return { ok: true, key, public: isPublic };
     },
 
     /**
@@ -274,7 +319,7 @@ export function createVaultAdmin(deps: VaultAdminDeps) {
     async overview(
       _caller: Caller,
       passphrase: string,
-    ): Promise<Result<{ keys: Array<{ name: string; type: ValueType; len: number; grant: boolean; label: string }> }>> {
+    ): Promise<Result<{ keys: Array<{ name: string; type: ValueType; len: number; grant: boolean; public: boolean; label: string }> }>> {
       try {
         // 열려 있으면 메모리에서 — 목록을 보려고 파일을 다시 복호화하지 않는다 (FWL-058)
         return { ok: true, keys: vault.locked ? overviewVaultFile(vaultFile, passphrase, cipher) : [...vault.list()] };

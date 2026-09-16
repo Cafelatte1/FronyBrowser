@@ -11,7 +11,7 @@ import type { GlyphSet, TestMode } from '@wallet/core';
 import { SPRITE_KEYPAD_GLYPHS, VaultLockedError, createMemoryAudit, createMemoryOriginProfiles, createMemoryTestMode, createSessionStore, createVault, writeVaultFile } from '@wallet/core';
 import { describe, expect, it } from 'vitest';
 import { TargetError } from '@wallet/app';
-import { createHandlers } from '@wallet/api';
+import { createHandlers, egressContext, scrub } from '@wallet/api';
 import { fakeCipher, fakeTarget, fakeVault } from '../../helpers/fakes.js';
 import { freshGrant } from '../../helpers/fakes.js';
 import type { FakeTargetOptions } from '../../helpers/fakes.js';
@@ -19,13 +19,13 @@ import type { FakeTargetOptions } from '../../helpers/fakes.js';
 const GRANT_KEY = 'test-grant-key';
 
 const ENTRIES = {
-  'profile.personal.phone': { type: 'phone', value: '01012345678', grant: false, label: 'Mobile' },
-  'card.personal.number': { type: 'card', value: '1234567812345678', grant: false, label: 'Card number' },
-  'shop.payment.pinnumber': { type: 'text', value: '1234', grant: true, label: 'Payment PIN' },
-  'shop.keypad.pin': { type: 'text', value: '739105', grant: false, label: 'Pin' },
-  'shop.keypad.broken': { type: 'text', value: 'ab-cd', grant: false, label: 'Broken' },
-  'shop.keypad.grantpin': { type: 'text', value: '5678', grant: true, label: 'Grantpin' },
-  'shop.keypad.sprite': { type: 'text', value: '4951', grant: false, label: 'Sprite' },
+  'profile.personal.phone': { type: 'phone', value: '01012345678', grant: false, public: false, label: 'Mobile' },
+  'card.personal.number': { type: 'card', value: '1234567812345678', grant: false, public: false, label: 'Card number' },
+  'shop.payment.pinnumber': { type: 'text', value: '1234', grant: true, public: false, label: 'Payment PIN' },
+  'shop.keypad.pin': { type: 'text', value: '739105', grant: false, public: false, label: 'Pin' },
+  'shop.keypad.broken': { type: 'text', value: 'ab-cd', grant: false, public: false, label: 'Broken' },
+  'shop.keypad.grantpin': { type: 'text', value: '5678', grant: true, public: false, label: 'Grantpin' },
+  'shop.keypad.sprite': { type: 'text', value: '4951', grant: false, public: false, label: 'Sprite' },
 } as const;
 
 const KEYPAD = { digitSelector: "img.kpd[aria-label='{digit}']" };
@@ -426,7 +426,7 @@ describe('세션 TTL', () => {
   it('sweep_expired — 금고 TTL 만료(열림→잠김)를 vault_lock 감사로 남긴다', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'wallet-handlers-'));
     const file = join(dir, 'vault.dpapi');
-    writeVaultFile(file, 'pp', new Map([['profile.personal.phone', { type: 'phone', value: '01012345678', grant: false, label: 'Mobile' }]]), fakeCipher);
+    writeVaultFile(file, 'pp', new Map([['profile.personal.phone', { type: 'phone', value: '01012345678', grant: false, public: false, label: 'Mobile' }]]), fakeCipher);
     let t = 0;
     const vault = createVault(file, { cipher: fakeCipher, ttlMs: 1_000, now: () => t });
     const audit = createMemoryAudit();
@@ -828,5 +828,68 @@ describe('fill — Test Mode 보류 키 (FWL-056)', () => {
     const sid2 = await begin(off.handlers);
     expect((await off.handlers.fill(caller, sid2, ref, '{{vault:profile.personal.phone}}')).ok).toBe(true);
     expect(off.state.filled[0]?.value).toBe('01012345678');
+  });
+});
+
+describe('공개 값 (FWL-080)', () => {
+  const PUB = {
+    ...ENTRIES,
+    'card.personal.issuer': { type: 'text', value: '카카오뱅크', grant: false, public: true, label: 'Issuer' },
+    'passport.personal.country': { type: 'text', value: 'south korea', grant: false, public: true, label: 'Country' },
+  } as const;
+
+  function pubSetup() {
+    const vault = fakeVault({ entries: { ...PUB } });
+    const audit = createMemoryAudit();
+    const handlers = createHandlers({
+      vault,
+      sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }),
+      targets: new Map([['browser', fakeTarget({ url: 'https://shop.com/checkout' }).target]]),
+      audit,
+      grantKey: GRANT_KEY,
+    });
+    return { vault, handlers, audit };
+  }
+
+  it('vault_list는 public 항목만 값을 싣고, 나머지는 이름·타입·플래그뿐이다', async () => {
+    const { handlers } = pubSetup();
+    const r = await handlers.vault_list(caller);
+    if (!r.ok) throw new Error('vault_list failed');
+
+    expect(r.keys.find((k) => k.name === 'card.personal.issuer')).toEqual({
+      name: 'card.personal.issuer', type: 'text', grant: false, public: true, label: 'Issuer', value: '카카오뱅크',
+    });
+    // 카드번호는 값도 길이도 나가지 않는다 — 여기가 뚫리면 프로젝트 전체가 무의미하다
+    expect(r.keys.find((k) => k.name === 'card.personal.number')).toEqual({
+      name: 'card.personal.number', type: 'card', grant: false, public: false, label: 'Card number',
+    });
+    for (const k of r.keys) expect(k).not.toHaveProperty('len');
+  });
+
+  it('public 값은 스크러버를 통과한다 — 이걸 안 하면 알려주려던 값이 페이지에서 지워진다', () => {
+    const { vault, audit } = pubSetup();
+    // 실제로 만났던 모양 그대로: 드롭다운 항목 이름 안에 카드사가 들어 있다
+    const tree = { tree: '- clickable "카카오뱅크카드"\n- text "여권 국가: south korea"\n- text "카드 1234567812345678"' };
+    const out = scrub({ ok: true as const, ...tree }, egressContext(vault, audit, 'page_tree', null));
+
+    expect((out as unknown as { tree: string }).tree).toContain('- clickable "카카오뱅크카드"');
+    expect((out as unknown as { tree: string }).tree).toContain('south korea');
+    // 같은 응답 안에서 public이 아닌 값은 여전히 지워진다
+    expect((out as unknown as { tree: string }).tree).toContain('[REDACTED:card.personal.number]');
+    expect((out as unknown as { tree: string }).tree).not.toContain('1234567812345678');
+  });
+
+  it('public 값도 평소대로 채운다 — 읽기 전용 메타가 아니라 그냥 금고 값이다', async () => {
+    const state = fakeTarget({ url: 'https://shop.com/checkout' });
+    const handlers = createHandlers({
+      vault: fakeVault({ entries: { ...PUB } }),
+      sessions: createSessionStore({ ttlMs: 60_000, maxConcurrent: 2 }),
+      targets: new Map([['browser', state.target]]),
+      audit: createMemoryAudit(),
+      grantKey: GRANT_KEY,
+    });
+    const sid = await begin(handlers);
+    expect((await handlers.fill(caller, sid, ref, '{{vault:passport.personal.country}}')).ok).toBe(true);
+    expect(state.filled[0]?.value).toBe('south korea');
   });
 });

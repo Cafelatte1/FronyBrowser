@@ -188,7 +188,7 @@ describe('/vault/* 인증', () => {
     expect(JSON.stringify(set.body)).not.toContain('01012345678');
 
     const list = await post('/vault/list', { passphrase: 'pp' }, token);
-    expect(list.body['keys']).toContainEqual({ name: 'profile.personal.phone', type: 'phone', len: 11, grant: false, label: 'Mobile' });
+    expect(list.body['keys']).toContainEqual({ name: 'profile.personal.phone', type: 'phone', len: 11, grant: false, public: false, label: 'Mobile' });
     expect(JSON.stringify(list.body)).not.toContain('01012345678');
 
     const setLog = audit.records.find((r) => r.evt === 'vault_set');
@@ -259,7 +259,7 @@ describe('/vault/* 인증', () => {
     expect(JSON.stringify(r.body)).not.toContain('value2');
     expect(audit.records.filter((x) => x.evt === 'vault_set' && (x.key === 'b.c.one' || x.key === 'b.c.two') && x.ok === true)).toHaveLength(2);
     const list = await post('/vault/list', { passphrase: 'pp' }, token);
-    expect(list.body['keys']).toContainEqual({ name: 'b.c.two', type: 'text', len: 6, grant: false, label: 'Two' });
+    expect(list.body['keys']).toContainEqual({ name: 'b.c.two', type: 'text', len: 6, grant: false, public: false, label: 'Two' });
   });
 
   it('grant 플래그 — 저장한 대로 목록에 실리고, boolean이 아니면 400', async () => {
@@ -268,7 +268,7 @@ describe('/vault/* 인증', () => {
     expect(set.status).toBe(200);
     expect(set.body).toMatchObject({ ok: true, key: 'g.h.pin', grant: true });
     const list = await post('/vault/list', { passphrase: 'pp' }, token);
-    expect(list.body['keys']).toContainEqual({ name: 'g.h.pin', type: 'text', len: 4, grant: true, label: 'Pin' });
+    expect(list.body['keys']).toContainEqual({ name: 'g.h.pin', type: 'text', len: 4, grant: true, public: false, label: 'Pin' });
     const bad = await post('/vault/set', { passphrase: 'pp', entries: [{ key: 'g.h.bad', type: 'text', value: 'v', grant: 'yes' }] }, token);
     expect(bad.status).toBe(400);
   });
@@ -281,9 +281,26 @@ describe('/vault/* 인증', () => {
     expect(r.body).toMatchObject({ ok: true, key: 'card.personal.number', label: '카카오뱅크' });
     // 이름만 바뀌고 값은 그대로다 — len이 증인이다
     const list = await post('/vault/list', { passphrase: 'pp' }, token);
-    expect(list.body['keys']).toContainEqual({ name: 'card.personal.number', type: 'card', len: 16, grant: false, label: '카카오뱅크' });
+    expect(list.body['keys']).toContainEqual({ name: 'card.personal.number', type: 'card', len: 16, grant: false, public: false, label: '카카오뱅크' });
     expect((await post('/vault/label', { key: 'no.such.key', label: 'x' }, token)).status).toBe(404);
     expect((await post('/vault/label', { key: 'card.personal.number', label: '  ' }, token)).status).toBe(400);
+  });
+
+  it('public — 값 없이 플래그만 바꾼다, 걸 수 없는 키는 400, 없는 키는 404 (FWL-080)', async () => {
+    const token = await login();
+    await post('/vault/set', { passphrase: 'pp', key: 'card.personal.issuer', type: 'text', value: '카카오뱅크' }, token);
+    await post('/vault/set', { passphrase: 'pp', key: 'pub.card.number', type: 'card', value: '4111111111111111' }, token);
+
+    const r = await post('/vault/public', { key: 'card.personal.issuer', public: true }, token); // 패스프레이즈 없이
+    expect(r.status).toBe(200);
+    expect(r.body).toMatchObject({ ok: true, key: 'card.personal.issuer', public: true });
+    const list = await post('/vault/list', { passphrase: 'pp' }, token);
+    // 콘솔이 받는 목록은 플래그만 얻는다 — 값은 여기로 나가지 않는다 (에이전트의 vault_list와 다른 지점이다)
+    expect(list.body['keys']).toContainEqual({ name: 'card.personal.issuer', type: 'text', len: 5, grant: false, public: true, label: 'Issuer' });
+
+    expect((await post('/vault/public', { key: 'pub.card.number', public: true }, token)).status).toBe(400);
+    expect((await post('/vault/public', { key: 'no.such.key', public: true }, token)).status).toBe(404);
+    expect((await post('/vault/public', { key: 'card.personal.issuer' }, token)).status).toBe(400);
   });
 
   it('rm — 있으면 200, 없으면 404', async () => {

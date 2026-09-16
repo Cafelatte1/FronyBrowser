@@ -140,8 +140,15 @@ export type ApprovalWaitResponse =
 
 /** 키 이름과 타입만. 값은 어떤 경우에도 나가지 않는다 */
 export type VaultListResponse = {
-  /** grant는 이 키를 채우려면 pay grant가 필요하다는 뜻, label은 운영자가 붙인 이름이다. 둘 다 값이 아니다 */
-  readonly keys: ReadonlyArray<{ readonly name: string; readonly type: string; readonly grant: boolean; readonly label: string }>;
+  /**
+   * grant는 이 키를 채우려면 pay grant가 필요하다는 뜻, label은 운영자가 붙인 이름이다. 둘 다 값이 아니다.
+   * public=true인 항목만 value가 함께 실린다 (FWL-080) — 운영자가 내보내도 된다고 표시한 값이다
+   */
+  readonly keys: ReadonlyArray<{
+    readonly name: string; readonly type: string;
+    readonly grant: boolean; readonly public: boolean; readonly label: string;
+    readonly value?: string;
+  }>;
 };
 
 /** admin 클라이언트만 호출할 수 있다. MCP 도구로 노출하지 않는다 (8.4) */

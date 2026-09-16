@@ -23,8 +23,8 @@ import { fakeVault } from '../../helpers/fakes.js';
 
 describe('resolve', () => {
   const vault = fakeVault({ entries: {
-    phone: { type: 'phone', value: '01012345678', grant: false, label: 'Mobile' },
-    name: { type: 'name', value: '홍길동', grant: false, label: 'Name' },
+    phone: { type: 'phone', value: '01012345678', grant: false, public: false, label: 'Mobile' },
+    name: { type: 'name', value: '홍길동', grant: false, public: false, label: 'Name' },
   } });
 
   it('플레이스홀더를 실제 값으로 치환하고 쓰인 키를 보고한다', () => {

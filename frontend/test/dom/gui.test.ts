@@ -79,7 +79,7 @@ const fakeFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit
     if (vaultLocked) return jsonRes(403, { ok: false, error: { code: 'vault_locked', message: 'unlock required' } });
     const items = body['entries'] as Array<{ key: string; type: string; value: string; grant?: boolean; label?: string }>;
     for (const e of items) {
-      registered.set(e.key, { name: e.key, type: e.type, len: e.value.length, grant: e.grant === true, label: e.label ?? '' });
+      registered.set(e.key, { name: e.key, type: e.type, len: e.value.length, grant: e.grant === true, public: e.public === true, label: e.label ?? '' });
     }
     return jsonRes(200, { ok: true, keys: [...registered.values()] });
   }
@@ -94,6 +94,12 @@ const fakeFetch = vi.fn(async (input: string | URL | Request, init?: RequestInit
     if (!cur) return jsonRes(404, { ok: false, error: { code: 'key_not_found', message: 'not in vault' } });
     cur.grant = body['grant'] === true;
     return jsonRes(200, { ok: true, key: cur.name, grant: cur.grant });
+  }
+  if (path === '/vault/public') {
+    const cur = registered.get(body['key'] as string);
+    if (!cur) return jsonRes(404, { ok: false, error: { code: 'key_not_found', message: 'no', retriable: false } });
+    cur.public = body['public'] === true;
+    return jsonRes(200, { ok: true, key: cur.name, public: cur.public });
   }
   if (path === '/vault/seed-labels') {
     if (vaultLocked) return locked();
@@ -148,7 +154,7 @@ describe('로그인과 금고 상태 카드', () => {
   it('로그인 전에는 로그인 화면이고 내비 골격은 이미 그려져 있다', () => {
     expect($('view-login').hidden).toBe(false);
     expect(document.querySelectorAll('.nav-item').length).toBe(SECTIONS.length + 1); // 내장 3 + New key group
-    expect(nav('personal').classList.contains('on')).toBe(true);
+    expect(nav('profile').classList.contains('on')).toBe(true);
   });
 
   it('틀린 비밀번호는 안내만 하고 시도 횟수를 말하지 않는다', async () => {
@@ -212,9 +218,9 @@ describe('내비와 행', () => {
     expect($('pane-blurb').textContent).toContain("payment gateway's own frame");
     expect(nav('card').classList.contains('on')).toBe(true);
     expect(rowKeys()).toEqual(SECTIONS.find((s) => s.id === 'card')!.fields.map((f) => f.key));
-    // 스키마 그룹에는 키 추가 폼이 없다
-    expect($('add-area').hidden).toBe(true);
-    nav('personal').click();
+    // 스키마 그룹에도 키를 더할 수 있다 (FWL-080) — card.personal.issuer 같은 공개 값이 들어올 자리다
+    expect($('add-area').hidden).toBe(false);
+    nav('profile').click();
     expect($('pane-title').textContent).toBe('Personal');
     expect(rowKeys()).toEqual(SECTIONS[0]!.fields.map((f) => f.key));
     expect([...$('rows').querySelectorAll('.badge')].every((b) => b.textContent === 'Not set')).toBe(true);
@@ -223,7 +229,7 @@ describe('내비와 행', () => {
   it('마스킹 입력은 CVV·카드 비밀번호뿐이다', () => {
     nav('card').click();
     expect($('rows').querySelectorAll('input[type=password]').length).toBe(2);
-    nav('personal').click();
+    nav('profile').click();
     expect($('rows').querySelectorAll('input[type=password]').length).toBe(0);
   });
 });
@@ -242,11 +248,11 @@ describe('그룹 저장', () => {
     expect($('banner-text').textContent).toContain('Email');
   });
 
-  it('보고 있는 그룹의 적은 칸만, 키·타입·값·grant·라벨로 보낸다', async () => {
+  it('보고 있는 그룹의 적은 칸만, 키·타입·값·grant·public·라벨로 보낸다', async () => {
     type(inputFor('profile.personal.email'), '  a@b.co  ');
     nav('card').click();
     type(inputFor('card.personal.expiry'), '12/27'); // 다른 그룹 — 이번 저장에 실리지 않는다
-    nav('personal').click();
+    nav('profile').click();
     calls.length = 0;
     await save();
     expect($('dialog').hidden).toBe(true); // 비밀번호를 다시 묻지 않는다 — 서버가 열린 금고의 패스프레이즈로 쓴다
@@ -254,12 +260,12 @@ describe('그룹 저장', () => {
     expect(sets()[0]?.body['passphrase']).toBeUndefined();
     const entries = sets()[0]?.body['entries'] as Array<{ key: string; type: string; value: string; grant: boolean; label: string }>;
     expect(entries.map((e) => e.key).sort()).toEqual(['profile.personal.email', 'profile.personal.phone']);
-    expect(entries.find((e) => e.key === 'profile.personal.email')).toEqual({ key: 'profile.personal.email', type: 'email', value: 'a@b.co', grant: false, label: 'Email' });
+    expect(entries.find((e) => e.key === 'profile.personal.email')).toEqual({ key: 'profile.personal.email', type: 'email', value: 'a@b.co', grant: false, public: false, label: 'Email' });
     expect(registered.has('card.personal.expiry')).toBe(false);
     // 저장 뒤 현황을 다시 그렸다
     expect(row('profile.personal.email').querySelector('.badge')?.textContent).toBe('Registered');
     expect(inputFor('profile.personal.email').value).toBe('');
-    expect(nav('personal').querySelector('.nav-count')?.textContent).toBe('2/5');
+    expect(nav('profile').querySelector('.nav-count')?.textContent).toBe('2/5');
     expect($('dialog').hidden).toBe(true);
   });
 });
@@ -309,7 +315,7 @@ describe('grant 토글과 키 보류', () => {
     calls.length = 0;
     await save();
     const entries = sets()[0]?.body['entries'] as Array<{ key: string; grant: boolean }>;
-    expect(entries).toEqual([{ key: 'profile.personal.carrier', type: 'text', value: 'SKT', grant: true, label: 'Carrier' }]);
+    expect(entries).toEqual([{ key: 'profile.personal.carrier', type: 'text', value: 'SKT', grant: true, public: false, label: 'Carrier' }]);
   });
 
   it('키 이름을 누르면 보류 목록 전체를 /admin/test-mode로 보낸다', async () => {
@@ -388,7 +394,7 @@ describe('사용자가 만든 그룹', () => {
     calls.length = 0;
     await save();
     const entries = sets()[0]?.body['entries'] as Array<Record<string, unknown>>;
-    expect(entries).toEqual([{ key: 'example-shop.payment.pinnumber', type: 'text', value: '123456', grant: false, label: 'Payment PIN' }]);
+    expect(entries).toEqual([{ key: 'example-shop.payment.pinnumber', type: 'text', value: '123456', grant: false, public: false, label: 'Payment PIN' }]);
     expect(row('example-shop.payment.pinnumber').querySelector('.badge')?.textContent).toBe('Registered');
     expect(nav('example-shop').querySelector('.nav-count')?.textContent).toBe('1/1');
   });
@@ -397,7 +403,7 @@ describe('사용자가 만든 그룹', () => {
 describe('이름 없는 키', () => {
   it('라벨이 빈 키가 있을 때만 줄이 뜨고, 버튼이 /vault/seed-labels를 부른다', async () => {
     expect($('unnamed').hidden).toBe(true);
-    registered.set('other-shop.login.id', { name: 'other-shop.login.id', type: 'text', len: 4, grant: false, label: '' });
+    registered.set('other-shop.login.id', { name: 'other-shop.login.id', type: 'text', len: 4, grant: false, public: false, label: '' });
     await relogin();
     expect($('unnamed').hidden).toBe(false);
     expect($('unnamed-text').textContent).toBe('1 key has no name yet.');
@@ -414,7 +420,7 @@ describe('이름 없는 키', () => {
 
 describe('삭제 · 대화상자 · 상태 변화', () => {
   it('삭제하면 목록에서 빠지고 배지가 Not set으로 돌아간다', async () => {
-    nav('personal').click();
+    nav('profile').click();
     calls.length = 0;
     (row('profile.personal.email').querySelector('.row-del') as HTMLButtonElement).click();
     await settle();
@@ -491,7 +497,7 @@ describe('서버가 바꾼 이름 (FWL-079)', () => {
     // 운영자가 콘솔 밖에서 이름만 바꿔 둔 상황이다 (POST /vault/label, FWL-078)
     vaultExists = true; vaultLocked = false; ttlMs = TTL_MAX;
     registered.clear();
-    registered.set('card.personal.number', { name: 'card.personal.number', type: 'card', len: 16, grant: false, label: '카카오뱅크' });
+    registered.set('card.personal.number', { name: 'card.personal.number', type: 'card', len: 16, grant: false, public: false, label: '카카오뱅크' });
     await relogin();
     nav('card').click();
     await settle();
@@ -502,5 +508,46 @@ describe('서버가 바꾼 이름 (FWL-079)', () => {
     await save();
     const entries = sets().at(-1)?.body['entries'] as Array<{ key: string; label: string }>;
     expect(entries.find((e) => e.key === 'card.personal.number')?.label).toBe('카카오뱅크');
+  });
+});
+
+describe('공개 값 (FWL-080)', () => {
+  it('스키마 섹션에 운영자가 더한 키가 함께 뜨고, 레일은 여전히 한 줄이다', async () => {
+    vaultExists = true; vaultLocked = false; ttlMs = TTL_MAX;
+    registered.clear();
+    registered.set('card.personal.issuer', { name: 'card.personal.issuer', type: 'text', len: 5, grant: false, public: true, label: 'Issuer' });
+    await relogin();
+    nav('card').click();
+    await settle();
+
+    // 예전에는 섹션이면 스키마 4줄에서 끝나서, 이 키가 금고에 있어도 화면 어디에도 없었다
+    expect(rowKeys()).toContain('card.personal.issuer');
+    // 그리고 같은 키 때문에 레일에 "Card"와 "card"가 따로 생겼다
+    expect(document.querySelectorAll('.nav-item[data-group="card"]').length).toBe(1);
+    expect(document.querySelectorAll('.nav-item').length).toBe(SECTIONS.length + 1);
+  });
+
+  it('public 체크는 그 자리에서 /vault/public을 부른다. 걸 수 없는 줄에는 체크가 없다', async () => {
+    vaultExists = true; vaultLocked = false; ttlMs = TTL_MAX;
+    registered.clear();
+    registered.set('card.personal.issuer', { name: 'card.personal.issuer', type: 'text', len: 5, grant: false, public: false, label: 'Issuer' });
+    await relogin();
+    nav('card').click();
+    await settle();
+
+    // 행에는 grant·public 두 칸이 있고, 카드번호처럼 걸 수 없는 타입은 grant 하나뿐이다
+    const boxes = (key: string): number => row(key).querySelectorAll('.grant').length;
+    expect(boxes('card.personal.issuer')).toBe(2);
+    expect(boxes('card.personal.number')).toBe(1); // type card — public 불가
+    expect(boxes('card.personal.password2')).toBe(1); // grant 키 — public 불가
+
+    calls.length = 0;
+    (row('card.personal.issuer').querySelector('.pub') as HTMLButtonElement).click();
+    await settle();
+    expect(calls.find((c) => c.path === '/vault/public')?.body).toEqual({ key: 'card.personal.issuer', public: true });
+    expect(row('card.personal.issuer').querySelector('.pub')?.getAttribute('data-grant')).toBe('on');
+    // 공개된 값에는 grant를 걸 수 없으므로 그 체크는 사라진다. 자리는 남아서 칸이 밀리지는 않는다
+    expect(row('card.personal.issuer').querySelectorAll('.grant').length).toBe(1);
+    expect(row('card.personal.issuer').querySelectorAll('.box-slot').length).toBe(1);
   });
 });

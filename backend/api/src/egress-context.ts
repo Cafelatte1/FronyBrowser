@@ -9,7 +9,12 @@ import type { EgressContext } from './egress.js';
 
 export function scrubEntriesOf(vault: Vault): ReadonlyArray<ScrubEntry> {
   if (vault.locked) return [];
-  return [...vault.live()].map(([key, e]) => toScrubEntry(key, e.value, e.type));
+  // public 항목은 매칭하지 않는다 (FWL-080). 빼는 게 아니라 넣으면 안 되는 쪽이다 — 스크러버는 평문
+  // 부분 문자열을 통째로 치환하므로, `card.personal.issuer = 카카오뱅크`를 대상에 넣는 순간
+  // 드롭다운의 "카카오뱅크카드"가 "[REDACTED:...]카드"가 된다. 에이전트더러 고르라고 알려준 바로 그 항목이다
+  return [...vault.live()]
+    .filter(([, e]) => !e.public)
+    .map(([key, e]) => toScrubEntry(key, e.value, e.type));
 }
 
 export function egressContext(
