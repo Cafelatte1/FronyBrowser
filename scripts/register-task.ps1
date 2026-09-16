@@ -15,6 +15,9 @@
     with browser = chrome and headless = false rendered a full page tree and a 988x653 screenshot from
     session 0. The cost of the old setting was real — the server did not come back from an unattended
     reboot at all, because nobody logs on to a headless machine.
+  ★ A second trigger re-checks every 10 minutes. MultipleInstances = IgnoreNew makes it a no-op while
+    the server is running, so it costs nothing and covers what RestartCount cannot: a process that
+    exited 0, or one the scheduler still believes is running.
   ★ Retry is 999 times a minute apart, not the Task Scheduler default: the launcher binds the Tailscale
     address (WALLET_BIND) and the boot trigger fires before Tailscale has one, so the first attempts die
     with EADDRNOTAVAIL. The sibling Frony services hit the same race and settled on the same numbers.
@@ -30,10 +33,11 @@ $ErrorActionPreference = "Stop"
 if (-not (Test-Path $Launcher)) { throw "launcher not found: $Launcher" }
 
 $action = New-ScheduledTaskAction -Execute $Launcher
-$trigger = New-ScheduledTaskTrigger -AtStartup
+$boot = New-ScheduledTaskTrigger -AtStartup
+$recheck = New-ScheduledTaskTrigger -Once -At "00:00" -RepetitionInterval (New-TimeSpan -Minutes 10)
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType S4U -RunLevel Limited
 
 Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
-Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal | Out-Null
+Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger @($boot, $recheck) -Settings $settings -Principal $principal | Out-Null
 "registered: $TaskName -> $Launcher (S4U as $env:USERNAME, at startup, retry 999x1m)"
