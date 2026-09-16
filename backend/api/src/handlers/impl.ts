@@ -606,8 +606,19 @@ export function createHandlers(deps: HandlerDeps) {
 
     async vault_list(_caller: Caller): Promise<Result<VaultListResponse>> {
       try {
-        // 길이는 싣지 않는다 — 값의 크기는 에이전트가 알 필요가 없고, 무차별 대입의 범위를 좁혀 준다 (FWL-058)
-        return { ok: true, keys: vault.list().map(({ name, type, grant, label }) => ({ name, type, grant, label })) };
+        // 길이는 싣지 않는다 — 값의 크기는 에이전트가 알 필요가 없고, 무차별 대입의 범위를 좁혀 준다 (FWL-058).
+        // public 항목만 값을 함께 싣는다 (FWL-080) — 어느 카드사인지, 어느 나라 여권인지는 에이전트가
+        // 화면에서 골라야 하는 것이라, 이름만으로는 고를 수가 없다
+        const live = vault.live();
+        return {
+          ok: true,
+          keys: vault.list().map((k) => ({
+            name: k.name, type: k.type, grant: k.grant, public: k.public, label: k.label,
+            // 값이 의도적으로 나가는 유일한 지점이다. list()는 값을 모르는 채로 두고 여기서만 꺼낸다 —
+            // 규칙 3을 검토할 때 봐야 할 곳이 한 줄이어야 한다
+            ...(k.public ? { value: live.get(k.name)?.value ?? '' } : {}),
+          })),
+        };
       } catch (e) {
         return toFailure(e);
       }

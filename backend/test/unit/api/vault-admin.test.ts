@@ -35,7 +35,7 @@ describe('grant — 값을 다시 받지 않고 플래그만 바꾼다', () => {
     const r = await admin.grant(caller, 'pp', 'shop.payment.pinnumber', true);
     expect(r).toEqual({ ok: true, key: 'shop.payment.pinnumber', grant: true });
     expect(overviewVaultFile(vaultFile, 'pp', fakeCipher)).toEqual([
-      { name: 'shop.payment.pinnumber', type: 'text', len: 4, grant: true, label: 'Payment PIN' },
+      { name: 'shop.payment.pinnumber', type: 'text', len: 4, grant: true, public: false, label: 'Payment PIN' },
     ]);
 
     const missing = await admin.grant(caller, 'pp', 'no.such.key', true);
@@ -89,7 +89,7 @@ describe('열린 금고 — 파일을 다시 복호화하지 않는다 (FWL-058)
     // 다른 패스프레이즈로 재암호화되지 않았다 — 바이트도 플래그도 그대로다
     expect(readFileSync(vaultFile).equals(before)).toBe(true);
     expect(overviewVaultFile(vaultFile, 'pp', fakeCipher)).toEqual([
-      { name: 'shop.payment.pinnumber', type: 'text', len: 4, grant: false, label: 'Payment PIN' },
+      { name: 'shop.payment.pinnumber', type: 'text', len: 4, grant: false, public: false, label: 'Payment PIN' },
     ]);
   });
 
@@ -102,8 +102,8 @@ describe('열린 금고 — 파일을 다시 복호화하지 않는다 (FWL-058)
     const r = await admin.overview(caller, 'pp');
     if (!r.ok) throw new Error('should succeed');
     expect(r.keys).toEqual([
-      { name: 'card.personal.number', type: 'card', len: 16, grant: true, label: 'Card number' },
-      { name: 'profile.personal.phone', type: 'phone', len: 11, grant: false, label: 'Mobile' },
+      { name: 'card.personal.number', type: 'card', len: 16, grant: true, public: false, label: 'Card number' },
+      { name: 'profile.personal.phone', type: 'phone', len: 11, grant: false, public: false, label: 'Mobile' },
     ]);
     expect(r.keys).toEqual(overviewVaultFile(vaultFile, 'pp', fakeCipher));
   });
@@ -145,7 +145,7 @@ describe('서버 밖에서 파일이 바뀐 경우 (FWL-058)', () => {
     await vault.unlock('pp');
 
     // CLI가 하는 일 — 서버를 거치지 않고 금고 파일을 직접 고친다
-    setVaultEntry(vaultFile, 'pp', 'shop.login.id', { type: 'text', value: 'me@example.com', grant: false, label: 'ID' }, fakeCipher);
+    setVaultEntry(vaultFile, 'pp', 'shop.login.id', { type: 'text', value: 'me@example.com', grant: false, public: false, label: 'ID' }, fakeCipher);
     // 파일시스템 타임스탬프 해상도가 낮으면 두 쓰기의 mtime이 같아진다 — 밖에서 바뀐 사실만 재현하면 된다
     const bumped = new Date(statSync(vaultFile).mtimeMs + 2_000);
     utimesSync(vaultFile, bumped, bumped);
@@ -154,5 +154,38 @@ describe('서버 밖에서 파일이 바뀐 경우 (FWL-058)', () => {
     expect(overviewVaultFile(vaultFile, 'pp', fakeCipher).map((k) => k.name).sort()).toEqual([
       'shop.login.id', 'shop.payment.pinnumber',
     ]);
+  });
+});
+
+describe('public — 값을 내보내도 되는 항목 (FWL-080)', () => {
+  it('text/name에만, grant가 아닐 때만 걸린다 — 나머지 조합은 bad_request이고 파일은 그대로다', async () => {
+    const { admin, vaultFile } = setup('public-guard');
+    expect((await admin.set(caller, 'pp', 'card.personal.issuer', 'text', '카카오뱅크')).ok).toBe(true);
+    expect((await admin.set(caller, 'pp', 'card.personal.number', 'card', '1234-5678-1234-5678')).ok).toBe(true);
+    expect((await admin.set(caller, 'pp', 'card.personal.password2', 'text', '12', true)).ok).toBe(true);
+
+    // 카드번호는 타입이 이미 "새면 안 되는 값"이라고 말한다
+    const byType = await admin.setPublic(caller, 'pp', 'card.personal.number', true);
+    expect(byType).toMatchObject({ ok: false, error: { code: 'bad_request' } });
+    // 결제 비밀번호는 grant 키다
+    const byGrant = await admin.setPublic(caller, 'pp', 'card.personal.password2', true);
+    expect(byGrant).toMatchObject({ ok: false, error: { code: 'bad_request' } });
+    // 거절당한 두 항목은 파일에서도 public이 아니다 — 응답만 거절하고 쓰기는 나가는 일이 없어야 한다
+    const after = overviewVaultFile(vaultFile, 'pp', fakeCipher);
+    expect(after.filter((k) => k.public)).toEqual([]);
+
+    expect(await admin.setPublic(caller, 'pp', 'card.personal.issuer', true)).toEqual({ ok: true, key: 'card.personal.issuer', public: true });
+    expect(overviewVaultFile(vaultFile, 'pp', fakeCipher).find((k) => k.name === 'card.personal.issuer')?.public).toBe(true);
+  });
+
+  it('set이 public을 바로 받을 때도 같은 판정을 한다. 공개된 키에는 grant를 걸 수 없다', async () => {
+    const { admin } = setup('public-set');
+    expect(await admin.set(caller, 'pp', 'profile.personal.phone', 'phone', '010-1111-2222', false, undefined, true))
+      .toMatchObject({ ok: false, error: { code: 'bad_request' } });
+
+    expect((await admin.set(caller, 'pp', 'passport.personal.country', 'text', 'south korea', false, undefined, true)).ok).toBe(true);
+    // 반대 방향도 막는다 — 어느 쪽을 먼저 켜든 같은 조합이다
+    expect(await admin.grant(caller, 'pp', 'passport.personal.country', true))
+      .toMatchObject({ ok: false, error: { code: 'bad_request' } });
   });
 });

@@ -1,7 +1,7 @@
 /**
  * 금고 등록·삭제·목록·unlock.
  *
- *   wallet set <group.subject.field> --type <card|phone|rrn|email|name|address|text> [--grant] [--label "<name>"]
+ *   wallet set <group.subject.field> --type <card|phone|rrn|email|name|address|text> [--grant] [--public] [--label "<name>"]
  *   wallet rm <group.subject.field>
  *   wallet list
  *   wallet relabel            — 이름이 비어 있는 항목에 기본 이름을 지어 넣는다 (백업을 먼저 만든다, FWL-056)
@@ -22,7 +22,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ValueType, VaultEntry } from '@wallet/core';
-import { KeypadUnresolvedError, TEMPLATE_NAME, buildGlyphSet, cropGlyph, decodePng, defaultDataDir, defaultLabelFor, migrateKeyNames, readTestModeFlag, readVaultFile, seedLabels, writeVaultFile } from '@wallet/core';
+import { KeypadUnresolvedError, PUBLIC_TYPES, TEMPLATE_NAME, buildGlyphSet, cropGlyph, decodePng, defaultDataDir, defaultLabelFor, migrateKeyNames, readTestModeFlag, readVaultFile, seedLabels, writeVaultFile } from '@wallet/core';
 import { promptHidden } from './prompt.js';
 
 const TYPES = ['card', 'phone', 'rrn', 'email', 'name', 'address', 'text'] as const;
@@ -37,7 +37,7 @@ function vaultPath(): string {
 
 function usage(): never {
   console.error(
-    'usage: wallet set <group.subject.field> --type <t> [--grant] [--label "<name>"] | wallet rm <group.subject.field> | wallet list | wallet relabel [<group.subject.field> "<name>"] | wallet migrate-keys | wallet unlock | wallet handoff | wallet status | wallet keypad-template <sprite.png> --cells <w>x<h> --order <row/row/..> --out <name>',
+    'usage: wallet set <group.subject.field> --type <t> [--grant] [--public] [--label "<name>"] | wallet rm <group.subject.field> | wallet list | wallet relabel [<group.subject.field> "<name>"] | wallet migrate-keys | wallet unlock | wallet handoff | wallet status | wallet keypad-template <sprite.png> --cells <w>x<h> --order <row/row/..> --out <name>',
   );
   console.error(`  types: ${TYPES.join(' ')}`);
   process.exit(2);
@@ -78,6 +78,13 @@ async function main(): Promise<void> {
       process.exit(1);
     }
     const grant = rest.includes('--grant');
+    // --public: 값을 내보내도 되는 항목 (FWL-080). 서버의 publicRefusal과 같은 판정을 CLI도 한다 —
+    // CLI는 파일에 직접 쓰므로 서버 검사를 거치지 않는다
+    const isPublic = rest.includes('--public');
+    if (isPublic && (!PUBLIC_TYPES.has(type) || grant)) {
+      console.error(grant ? 'grant 키는 public일 수 없습니다' : `public은 ${[...PUBLIC_TYPES].join('·')} 타입에만 겁니다`);
+      process.exit(1);
+    }
     const labelIdx = rest.indexOf('--label');
     const labelArg = labelIdx >= 0 ? rest[labelIdx + 1]?.trim() : undefined;
     if (labelIdx >= 0 && !labelArg) usage();
@@ -91,9 +98,9 @@ async function main(): Promise<void> {
     const entries = await openOrInit(path, passphrase);
     // 이름은 보낸 값 > 이미 붙어 있던 이름 > 키에서 지어낸 기본값 순 (FWL-056)
     const label = labelArg || entries.get(key)?.label || defaultLabelFor(key);
-    entries.set(key, { type: type as ValueType, value, grant, label });
+    entries.set(key, { type: type as ValueType, value, grant, public: isPublic, label });
     writeVaultFile(path, passphrase, entries);
-    console.log(`ok: ${label} · ${key} (${type}${grant ? ', grant' : ''}) 저장됨 — 값 길이 ${value.length}`);
+    console.log(`ok: ${label} · ${key} (${type}${grant ? ', grant' : ''}${isPublic ? ', public' : ''}) 저장됨 — 값 길이 ${value.length}`);
     return;
   }
 
@@ -117,7 +124,11 @@ async function main(): Promise<void> {
       console.log('(비어 있음)');
       return;
     }
-    for (const [name, e] of entries) console.log(`${e.label}\t${name}\t${e.type}${e.grant ? ' grant' : ''}\tlen=${e.value.length}`);
+    // public 항목은 값을 그대로 보여준다 — 에이전트가 읽는 것과 운영자가 보는 것이 다르면 확인할 길이 없다
+    for (const [name, e] of entries) {
+      const flags = `${e.grant ? ' grant' : ''}${e.public ? ' public' : ''}`;
+      console.log(`${e.label}\t${name}\t${e.type}${flags}\t${e.public ? `= ${e.value}` : `len=${e.value.length}`}`);
+    }
     return;
   }
 

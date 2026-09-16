@@ -2,7 +2,7 @@
  * HTTP 서버. 소비자 입구는 /mcp 하나이고 나머지는 내부 경로다:
  *   POST /mcp            — MCP streamable-http (기기 키 인증)
  *   POST /login          — 등록 페이지 로그인 (FronyAuth /admin/verify 위임 → wsess_ 발급)
- *   POST /vault/unlock·set·label·rm·rm-keys·list·grant·seed-labels·migrate-keys·create — admin 전용 (wsess_ 또는 admin 기기 키). 값은 응답에 없다
+ *   POST /vault/unlock·set·label·rm·rm-keys·list·grant·public·seed-labels·migrate-keys·create — admin 전용 (wsess_ 또는 admin 기기 키). 값은 응답에 없다
  *   POST /vault/reset    — 등록 페이지 세션(wsess_) 전용. 패스프레이즈를 받지 않는다 (마스터 비밀번호 분실용, FWL-056)
  *   POST /vault/handoff  — admin, 또는 서버 자신의 서비스 키(같은 머신의 배포 스크립트). 인계 파일만 쓴다 (FWL-042)
  *   GET/POST /admin/test-mode — 등록 페이지 세션(wsess_) 전용. 기기 키는 admin이라도 403 (FWL-035)
@@ -302,7 +302,7 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
     const caller = await requireAdmin(deps, gui, req, res);
     if (!caller) return;
     const body = (await readBody(req)) as
-      | { passphrase?: string; key?: string; keys?: string[]; type?: string; value?: string; grant?: unknown; label?: unknown }
+      | { passphrase?: string; key?: string; keys?: string[]; type?: string; value?: string; grant?: unknown; public?: unknown; label?: unknown }
       | undefined;
     // 금고를 여는 호출(unlock·create·handoff)만 마스터 비밀번호를 요구한다. 나머지(목록·저장·삭제·grant 토글·
     // 라벨 시딩)는 금고가 열려 있으면 메모리의 패스프레이즈로 처리한다 — 관리 UI가 비밀번호를 거듭 묻지
@@ -348,12 +348,12 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
       // entries[]가 있으면 일괄 저장 (복호화·재암호화 한 번) — GUI의 "입력한 항목 저장"
       const entries = (body as { entries?: unknown }).entries;
       if (Array.isArray(entries)) {
-        const okShape = entries.every((e) => e && typeof e === 'object' && typeof (e as { key?: unknown }).key === 'string' && typeof (e as { type?: unknown }).type === 'string' && typeof (e as { value?: unknown }).value === 'string' && ((e as { grant?: unknown }).grant === undefined || typeof (e as { grant?: unknown }).grant === 'boolean') && ((e as { label?: unknown }).label === undefined || typeof (e as { label?: unknown }).label === 'string'));
+        const okShape = entries.every((e) => e && typeof e === 'object' && typeof (e as { key?: unknown }).key === 'string' && typeof (e as { type?: unknown }).type === 'string' && typeof (e as { value?: unknown }).value === 'string' && ((e as { grant?: unknown }).grant === undefined || typeof (e as { grant?: unknown }).grant === 'boolean') && ((e as { public?: unknown }).public === undefined || typeof (e as { public?: unknown }).public === 'boolean') && ((e as { label?: unknown }).label === undefined || typeof (e as { label?: unknown }).label === 'string'));
         if (!okShape) {
-          json(res, 400, { ok: false, error: { code: 'bad_request', message: 'entries: [{ key, type, value, grant?, label? }]', retriable: false } });
+          json(res, 400, { ok: false, error: { code: 'bad_request', message: 'entries: [{ key, type, value, grant?, public?, label? }]', retriable: false } });
           return;
         }
-        const result = await deps.vaultAdmin.setMany(caller, passphrase, entries as Array<{ key: string; type: string; value: string; grant?: boolean; label?: string }>);
+        const result = await deps.vaultAdmin.setMany(caller, passphrase, entries as Array<{ key: string; type: string; value: string; grant?: boolean; public?: boolean; label?: string }>);
         jsonScrubbed(deps, 'vault_set', res, adminStatus(result), result);
         return;
       }
@@ -361,7 +361,7 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
         json(res, 400, { ok: false, error: { code: 'bad_request', message: 'key/type/value required', retriable: false } });
         return;
       }
-      const result = await deps.vaultAdmin.set(caller, passphrase, body.key as string, body.type as string, body.value as string, typeof body?.grant === 'boolean' ? body.grant : false, typeof body?.label === 'string' ? body.label : undefined);
+      const result = await deps.vaultAdmin.set(caller, passphrase, body.key as string, body.type as string, body.value as string, typeof body?.grant === 'boolean' ? body.grant : false, typeof body?.label === 'string' ? body.label : undefined, typeof body?.public === 'boolean' ? body.public : false);
       jsonScrubbed(deps, 'vault_set', res, adminStatus(result), result);
       return;
     }
@@ -391,6 +391,15 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
       }
       const result = await deps.vaultAdmin.rmKeys(caller, passphrase, body.keys as string[]);
       jsonScrubbed(deps, 'vault_rm', res, adminStatus(result), result);
+      return;
+    }
+    if (url.pathname === '/vault/public') {
+      if (typeof body?.key !== 'string' || typeof body?.public !== 'boolean') {
+        json(res, 400, { ok: false, error: { code: 'bad_request', message: 'key/public required', retriable: false } });
+        return;
+      }
+      const result = await deps.vaultAdmin.setPublic(caller, passphrase, body.key, body.public as boolean);
+      jsonScrubbed(deps, 'vault_set', res, adminStatus(result), result);
       return;
     }
     if (url.pathname === '/vault/grant') {

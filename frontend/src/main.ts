@@ -7,12 +7,12 @@
  * 마스터 비밀번호는 저장·열기·연장 대화상자에서만 받는다 (FWL-056).
  */
 
-import { CUSTOM_BLURB, EXTRA_KEY, SCHEMA_KEYS, SECTIONS, checkFields, groupOf, isSecretKey, type FieldDef, type KeyInfo } from './schema.js';
+import { CUSTOM_BLURB, EXTRA_KEY, PUBLIC_TYPES, SCHEMA_KEYS, SECTIONS, SECTION_GROUPS, checkFields, groupOf, isSecretKey, type FieldDef, type KeyInfo } from './schema.js';
 import { fmtRemain } from './format.js';
 
 /** 화면 한 줄 — 스키마 항목이거나, 금고에 있는 기타 키거나, 아직 저장 안 한 추가 줄이다 */
 type Row = {
-  key: string; type: string; label: string; grant: boolean;
+  key: string; type: string; label: string; grant: boolean; public: boolean;
   registered: boolean; secret: boolean; field?: FieldDef;
 };
 type VaultState = 'open' | 'locked' | 'missing' | 'offline';
@@ -34,6 +34,8 @@ const newGroups = new Set<string>();
 const draft = new Map<string, string>();
 /** 아직 등록되지 않은 키의 grant 체크 상태 (저장 때 같이 나간다) */
 const grantDraft = new Map<string, boolean>();
+/** 아직 저장 안 된 줄의 public 체크 — 저장 때 값과 함께 나간다 (FWL-080) */
+const publicDraft = new Map<string, boolean>();
 let dlg: Dlg | null = null;
 /** grantOff 대화상자가 묻고 있는 줄 — 확인을 누르면 이 줄의 플래그를 끈다 */
 let grantOffRow: Row | null = null;
@@ -178,29 +180,33 @@ function titleOf(id: string): string {
 
 function rowsOf(id: string): Row[] {
   const section = sectionOf(id);
-  if (section) {
-    return section.fields.map((f) => {
-      const info = existing.get(f.key);
-      return {
-        // 이미 등록된 키는 서버에 저장된 이름이 진실이다 (FWL-079). 스키마의 이름은 아직 없는 행의 기본값일 뿐이라,
-        // 이걸 안 보면 운영자가 바꾼 이름이 콘솔에 안 뜨고 다음 저장 때 스키마 이름으로 되돌아간다
-        key: f.key, type: f.type, label: info && info.label !== '' ? info.label : f.label, field: f, secret: f.secret === true,
-        registered: info !== undefined,
-        grant: info ? info.grant : grantDraft.get(f.key) ?? f.grant === true,
-      };
-    });
-  }
-  const rows: Row[] = [...existing.values()]
+  const rows: Row[] = section
+    ? section.fields.map((f) => {
+        const info = existing.get(f.key);
+        return {
+          // 이미 등록된 키는 서버에 저장된 이름이 진실이다 (FWL-079). 스키마의 이름은 아직 없는 행의 기본값일 뿐이라,
+          // 이걸 안 보면 운영자가 바꾼 이름이 콘솔에 안 뜨고 다음 저장 때 스키마 이름으로 되돌아간다
+          key: f.key, type: f.type, label: info && info.label !== '' ? info.label : f.label, field: f, secret: f.secret === true,
+          registered: info !== undefined,
+          grant: info ? info.grant : grantDraft.get(f.key) ?? f.grant === true,
+          public: info ? info.public : publicDraft.get(f.key) === true,
+        };
+      })
+    : [];
+  // 스키마 섹션에도 운영자가 더한 키가 붙는다 (FWL-080) — card.personal.issuer 같은 공개 값이 여기 산다.
+  // 예전에는 섹션이면 고정 14줄에서 끝나서, 이런 키가 금고에는 있는데 화면 어디에도 없었다
+  rows.push(...[...existing.values()]
     .filter((k) => !SCHEMA_KEYS.has(k.name) && groupOf(k.name) === id)
     .sort((a, b) => a.name.localeCompare(b.name))
     .map((k) => ({
       key: k.name, type: k.type, label: k.label !== '' ? k.label : k.name,
-      grant: k.grant, registered: true, secret: isSecretKey(k.name),
-    }));
+      grant: k.grant, public: k.public, registered: true, secret: isSecretKey(k.name),
+    })));
   for (const p of pendingRows.get(id) ?? []) {
     rows.push({
       key: p.key, type: p.type, label: p.label, registered: false,
       secret: isSecretKey(p.key), grant: grantDraft.get(p.key) === true,
+      public: publicDraft.get(p.key) === true,
     });
   }
   return rows;
@@ -211,6 +217,9 @@ function customGroups(): string[] {
   const set = new Set<string>(newGroups);
   for (const k of existing.keys()) if (!SCHEMA_KEYS.has(k)) set.add(groupOf(k));
   for (const g of pendingRows.keys()) set.add(g);
+  // 섹션이 이미 가진 그룹은 빼낸다 (FWL-080) — 안 그러면 card.personal.issuer 하나에
+  // 레일이 "Card"와 "card" 두 줄로 갈라지고, 둘 다 같은 패널을 연다
+  for (const g of SECTION_GROUPS) set.delete(g);
   return [...set].sort((a, b) => a.localeCompare(b));
 }
 
@@ -318,11 +327,29 @@ function rowEl(r: Row): HTMLElement {
   label.append(el('div', undefined, r.label), el('div', 'row-key', r.key));
   label.addEventListener('click', () => { void toggleHold(r.key); });
 
-  const grant = el('button', 'grant');
-  grant.dataset['grant'] = r.grant ? 'on' : 'off';
-  grant.title = 'Requires a grant before an agent may use this key';
-  grant.insertAdjacentHTML('beforeend', CHECK_SVG);
-  grant.addEventListener('click', () => { void toggleGrant(r); });
+  // 공개된 값에는 grant를 걸 수 없다 (FWL-080) — 서버가 그 조합을 거부하므로 화면도 내주지 않는다
+  const grant = r.public ? el('span', 'box-slot') : el('button', 'grant');
+  if (grant instanceof HTMLButtonElement) {
+    grant.dataset['grant'] = r.grant ? 'on' : 'off';
+    grant.title = 'Requires a grant before an agent may use this key';
+    grant.insertAdjacentHTML('beforeend', CHECK_SVG);
+    grant.addEventListener('click', () => { void toggleGrant(r); });
+  }
+
+  // public은 값을 에이전트에게 내보내는 유일한 스위치다 (FWL-080). 걸 수 없는 줄에는 체크를 안 그린다 —
+  // 눌리지 않는 회색 체크는 "왜 안 되지"만 남긴다. 대신 자리는 비워 둔다: 두 칸의 위치가 고정돼야
+  // 어느 쪽이 grant고 어느 쪽이 public인지 머리글과 맞춰 읽힌다
+  const pub = PUBLIC_TYPES.has(r.type) && !r.grant ? el('button', 'grant pub') : el('span', 'box-slot');
+  if (pub instanceof HTMLButtonElement) {
+    pub.dataset['grant'] = r.public ? 'on' : 'off';
+    pub.title = 'Let an agent read this value — vault_list returns it and the scrubber leaves it alone';
+    pub.insertAdjacentHTML('beforeend', CHECK_SVG);
+    pub.addEventListener('click', () => { void togglePublic(r); });
+  }
+  // 두 플래그는 한 칸에 나란히 둔다 — 행 그리드는 다섯 칸이고, 여섯 번째를 만들면 좁은 화면의
+  // 자리 배치 규칙이 통째로 한 칸씩 밀린다
+  const flags = el('div', 'flags');
+  flags.append(grant, pub);
 
   const badge = el('span', `badge ${r.registered ? 'filled' : 'empty'}`, r.registered ? 'Registered' : 'Not set');
 
@@ -337,7 +364,7 @@ function rowEl(r: Row): HTMLElement {
     updateEntered();
   });
 
-  row.append(label, grant, badge, input, r.registered ? delButton(r) : isPending(r) ? discardButton(r) : el('span'));
+  row.append(label, flags, badge, input, r.registered ? delButton(r) : isPending(r) ? discardButton(r) : el('span'));
   return row;
 }
 
@@ -371,7 +398,9 @@ function renderContent(): void {
 
   // 그룹 통째로 지우기는 스키마 밖 그룹에만 — 스키마 그룹은 줄마다 Delete로 지운다
   $('btn-del-group').hidden = section !== undefined || vault !== 'open';
-  $('add-area').hidden = section !== undefined;
+  // 스키마 섹션에도 키를 더할 수 있다 (FWL-080) — card.personal.issuer 같은 공개 값이 들어올 자리다.
+  // 그룹 이름이 섹션 id와 같아졌으므로 `${current}.${입력}` 조합이 그대로 맞는다
+  $('add-area').hidden = false;
   $('add-full').textContent = `${current}.${$<HTMLInputElement>('add-field').value.trim() || 'login.id'}`;
 
   updateEntered();
@@ -422,6 +451,32 @@ async function applyGrant(r: Row, grant: boolean): Promise<void> {
     existing.set(r.key, info);
     render();
     note(false, `Could not change the grant flag: ${(e as Error).message}`);
+  }
+}
+
+/**
+ * public 토글 (FWL-080). grant와 달리 끌 때 묻지 않고 켤 때 묻는다 —
+ * 되돌릴 수 없는 쪽은 값이 한번 나가는 쪽이지, 다시 감추는 쪽이 아니다
+ */
+async function togglePublic(r: Row): Promise<void> {
+  if (!r.registered) {
+    publicDraft.set(r.key, !r.public);
+    render();
+    return;
+  }
+  if (!r.public && !confirm(`Let an agent read the value of ${r.label}? It will appear in vault_list and stop being redacted on pages.`)) return;
+  const info = existing.get(r.key);
+  if (info === undefined) return;
+  const next = !r.public;
+  existing.set(r.key, { ...info, public: next });
+  render();
+  try {
+    await api('/vault/public', { key: r.key, public: next });
+    note(true, next ? `${r.label} is readable by an agent now.` : `${r.label} is hidden from agents again.`);
+  } catch (e) {
+    existing.set(r.key, info);
+    render();
+    note(false, `Could not change the public flag: ${(e as Error).message}`);
   }
 }
 
@@ -565,10 +620,10 @@ async function saveGroup(): Promise<void> {
   const group = current;
   const pending = enteredRows();
   // 한 요청으로 보낸다 — 서버가 복호화·재암호화를 한 번만 하고, 전부 저장되거나 아무것도 저장되지 않는다
-  const entries = pending.map((r) => ({ key: r.key, type: r.type, value: valueOf(r.key), grant: r.grant, label: r.label }));
+  const entries = pending.map((r) => ({ key: r.key, type: r.type, value: valueOf(r.key), grant: r.grant, public: r.public, label: r.label }));
   await api('/vault/set', { entries });
   const saved = new Set(entries.map((e) => e.key));
-  for (const key of saved) { draft.delete(key); grantDraft.delete(key); }
+  for (const key of saved) { draft.delete(key); grantDraft.delete(key); publicDraft.delete(key); }
   const left = (pendingRows.get(group) ?? []).filter((p) => !saved.has(p.key));
   if (left.length > 0) pendingRows.set(group, left); else pendingRows.delete(group);
   newGroups.delete(group);
@@ -599,6 +654,7 @@ async function resetVault(): Promise<void> {
   newGroups.clear();
   draft.clear();
   grantDraft.clear();
+  publicDraft.clear();
   held.clear();
   current = SECTIONS[0]!.id;
   note(true, 'The vault and every value in it are gone. Set a new master password to start again.');

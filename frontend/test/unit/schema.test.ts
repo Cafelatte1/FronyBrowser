@@ -25,7 +25,7 @@ describe('스키마 자체', () => {
   it('설명 문구는 2026-09-11 디자인 문구다 — 서버 정책이 출처를 고른다는 말은 없다', () => {
     const blurb = (id: string): string => SECTIONS.find((s) => s.id === id)!.blurb;
     expect(blurb('card')).toBe("These go into the payment gateway's own frame, never the shop's page. CVV and the card password stay masked as you type.");
-    expect(blurb('personal')).toBe('Values leave this page only as a write. What comes back is a name, a type and a length — never the value, not to this page and not to an agent.');
+    expect(blurb('profile')).toBe('Values leave this page only as a write. What comes back is a name, a type and a length — never the value, not to this page and not to an agent.');
     expect(CUSTOM_BLURB).toBe('Keys you added yourself. A key marked grant is filled only when the calling service hands over a pay grant for the session.');
     for (const text of [...SECTIONS.map((s) => s.blurb), CUSTOM_BLURB]) expect(text).not.toContain('policy');
   });
