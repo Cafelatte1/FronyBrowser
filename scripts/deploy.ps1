@@ -24,19 +24,52 @@ param(
 $ErrorActionPreference = "Continue"
 Set-Location (Split-Path -Parent $PSScriptRoot)
 
-# 0. unlock handoff (FWL-042) — ask the running server to leave a short-lived DPAPI file so the
-#    new process resumes the vault unlock with the same deadline. Needs an admin device key in
-#    FRONY_KEY; without it (or with a locked vault) the vault simply stays locked after restart.
+# 0. unlock handoff (FWL-042) — ask the running server to leave a short-lived DPAPI file so the new
+#    process resumes the vault unlock with the same deadline.
+#
+#    /vault/handoff answers 403 for two unrelated things: "your key is not allowed" and "the vault is
+#    already locked, there is nothing to hand off". The old message folded both into "skipped", and on
+#    2026-09-16 that cost real time: Windows updates had rebooted the machine and left the vault locked,
+#    the deploy printed a 403, and it was read as an auth problem and chased as one. So ask /health
+#    first — no auth, and it reports vaultLocked outright — and say plainly which of the two happened.
+#
+#    Both accepted credentials are tried because which env var holds which is genuinely not visible
+#    from here: on this server FRONY_KEY is the value the service itself runs under, so it passes
+#    handoff while every other /vault route refuses it as "admin only". Looping costs six lines and
+#    removes that guessing game.
 $walletServer = if ($env:WALLET_SERVER) { $env:WALLET_SERVER } else { "http://$(tailscale ip -4 2>$null | Select-Object -First 1):9420" }
-if ($env:FRONY_KEY) {
-    try {
-        $r = Invoke-RestMethod -Method Post -Uri "$walletServer/vault/handoff" -Headers @{ authorization = "Bearer $env:FRONY_KEY" } -TimeoutSec 10
-        "unlock handoff: ok ($([math]::Round($r.remainingMs / 60000)) min left)"
-    } catch {
-        "unlock handoff: skipped ($($_.Exception.Message)) - run 'wallet unlock' after restart"
-    }
+
+$vaultOpen = $null
+try { $vaultOpen = -not (Invoke-RestMethod -Uri "$walletServer/health" -TimeoutSec 10).vaultLocked } catch { }
+
+if ($vaultOpen -eq $null) {
+    # /health did not answer, so the server is not up — there is nothing running to hand anything over.
+    # Saying "key refused" here would send the next reader hunting an auth problem that does not exist.
+    "unlock handoff: not needed - no server answering at $walletServer, run 'wallet unlock' after restart"
+} elseif ($vaultOpen -eq $false) {
+    "unlock handoff: not needed - the vault is already locked, run 'wallet unlock' after restart"
 } else {
-    "unlock handoff: skipped (FRONY_KEY not set) - run 'wallet unlock' after restart"
+    $keys = @()
+    if ($env:FRONY_KEY)         { $keys += [pscustomobject]@{ name = "FRONY_KEY";         value = $env:FRONY_KEY } }
+    if ($env:FRONY_SERVICE_KEY) { $keys += [pscustomobject]@{ name = "FRONY_SERVICE_KEY"; value = $env:FRONY_SERVICE_KEY } }
+
+    $handed = $false
+    foreach ($k in $keys) {
+        try {
+            $r = Invoke-RestMethod -Method Post -Uri "$walletServer/vault/handoff" -Headers @{ authorization = "Bearer $($k.value)" } -TimeoutSec 10
+            "unlock handoff: ok via $($k.name) ($([math]::Round($r.remainingMs / 60000)) min left)"
+            $handed = $true
+            break
+        } catch {
+            $status = try { [int]$_.Exception.Response.StatusCode } catch { 0 }
+            "unlock handoff: $($k.name) refused$(if ($status) { " ($status)" } else { " ($($_.Exception.Message))" })"
+        }
+    }
+    if (-not $handed) {
+        # Loud on purpose. The deploy still succeeds, but the vault comes back locked and every fill
+        # fails with vault_locked until someone types the master password.
+        "unlock handoff: ** FAILED ** - $(if ($keys.Count) { "no key was accepted" } else { "FRONY_KEY and FRONY_SERVICE_KEY are both unset" }); the vault will be LOCKED after restart, run 'wallet unlock'"
+    }
 }
 
 # 1. stop — wait for the task to end, then kill any node process serving the api
