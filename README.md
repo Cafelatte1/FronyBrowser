@@ -59,8 +59,8 @@ Put values in the vault from the operator console at `http://<server>:9420/` or 
 it once per server start (the console's "Open vault" button does the same as the CLI):
 
 ```powershell
-npm run wallet -- set card.personal.number --type card
-npm run wallet -- unlock
+npm run vault -- set card.personal.number --type card
+npm run vault -- unlock
 ```
 
 There is no per-site configuration on this server. A key name is `group.subject.field`, and the

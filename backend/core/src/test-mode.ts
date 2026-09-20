@@ -57,7 +57,7 @@ function readJson(file: string): Record<string, unknown> | null {
   }
 }
 
-/** 파일이 없거나 깨졌으면 꺼진 것으로 본다 — Test Mode는 예외 모드라 기본은 "입력함"이다. 켜진 상태는 기동 로그·UI 배지·`wallet status`가 알린다 */
+/** 파일이 없거나 깨졌으면 꺼진 것으로 본다 — Test Mode는 예외 모드라 기본은 "입력함"이다. 켜진 상태는 기동 로그·UI 배지·`vault status`가 알린다 */
 export function readTestModeFlag(file: string): TestModeState {
   const parsed = readJson(file);
   if (parsed !== null) {

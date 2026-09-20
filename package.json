@@ -19,7 +19,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --build",
-    "wallet": "tsx backend/cli/src/index.ts",
+    "vault": "tsx backend/cli/src/index.ts",
     "test:unit": "vitest run --project unit --project frontend",
     "test:integration": "vitest run --project integration",
     "test:live": "cross-env WALLET_LIVE=1 vitest run --project live"

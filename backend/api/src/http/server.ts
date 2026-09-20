@@ -199,7 +199,7 @@ async function route(deps: HttpDeps, gui: GuiSessions, req: IncomingMessage, res
     if (deps.publicUrl) res.setHeader('www-authenticate', `Bearer resource_metadata="${resourceMetadataUrl(deps.publicUrl)}"`);
     const caller = await authenticate(deps, req, res);
     if (!caller) return;
-    // stateless 모드 — wallet 세션은 MCP 전송 세션이 아니라 session_begin 도구가 관리한다
+    // stateless 모드 — FronyBrowser 세션은 MCP 전송 세션이 아니라 session_begin 도구가 관리한다
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
     const server = buildMcpServer({ handlers: deps.handlers, vault: deps.vault, audit: deps.audit, version: deps.version ?? '0.0.0-dev' }, caller);
     await server.connect(transport);
