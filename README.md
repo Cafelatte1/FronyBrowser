@@ -21,6 +21,26 @@ is right. The one thing it checks on the value side is that a key registered wit
 `grant` flag is filled only with a valid pay grant from the calling service
 ([docs/pay-grant.md](docs/pay-grant.md)).
 
+## What runs on it
+
+FronyBrowser holds the values and enforces the rules; it makes no decision of its own. A
+companion service owns a decision — is this purchase legitimate, is this the booking the user
+asked for — and hands its verdict over as a signed pay grant
+([docs/pay-grant.md](docs/pay-grant.md)). The agent calls both servers; they never call each
+other, and only identifiers cross between them. A prompt-injected agent cannot forge the grant,
+so carrying it through the agent's hands is not itself a risk.
+
+The one such service in use is FronyShopping, on the operator's home server: a product is
+registered once with its price range, `begin_checkout` runs its own checks and issues the grant,
+and FronyBrowser types the payment PIN only when that grant is present.
+
+The vault's groups say what the browser is shaped for:
+
+- `profile.*` — identity verification and sign-up forms: phone, carrier, resident registration number, address
+- `card.*` — checkout; the payment PIN carries the `grant` flag
+- `passport.*` — booking forms that must match the passport's printed spelling
+- `<site>.login.*` — signing in, so no session cookie has to be pre-seeded
+
 ## Quick start
 
 Requires Node 20+ and Windows: the vault is sealed with DPAPI under your own Windows account,
