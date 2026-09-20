@@ -11,7 +11,7 @@ else about grants is in the code.
 
 A key to an irreversible action — a payment password — is never filled without proof that the payment is a legitimate transaction. That proof is the pay grant.
 
-Wallet does not decide whether the action is right — it holds no business logic. That judgment belongs to the issuer, the service that owns the decision (for a purchase: the shopping service, after its own checks pass), and the pay grant hands that verdict to wallet as **one signed token**. The two servers never call each other — they share one symmetric key (`FRONY_GRANT_KEY`), and the token travels through the agent's hands. Even if the agent is prompt-injected, it cannot forge the signature, so passing the token through it is not itself a risk.
+FronyBrowser does not decide whether the action is right — it holds no business logic. That judgment belongs to the issuer, the service that owns the decision (for a purchase: the shopping service, after its own checks pass), and the pay grant hands that verdict to FronyBrowser as **one signed token**. The two servers never call each other — they share one symmetric key (`FRONY_GRANT_KEY`), and the token travels through the agent's hands. Even if the agent is prompt-injected, it cannot forge the signature, so passing the token through it is not itself a risk.
 
 | Role | Who |
 |---|---|
@@ -34,7 +34,7 @@ Payload:
 {
   "v": 1,
   "txn_id": "<issuer's correlation id>",
-  "session_id": "<wallet sessionId>",
+  "session_id": "<FronyBrowser sessionId>",
   "iat": 1800000000,
   "exp": 1800000300
 }
@@ -44,11 +44,11 @@ Payload:
 |---|---|---|
 | `v` | fixed `1` | any other value → `malformed` |
 | `txn_id` | string | the issuer's correlation id, for joining audits — its meaning is the issuer's |
-| `session_id` | string | the **wallet-issued** sessionId; used from another session is rejected |
+| `session_id` | string | the **FronyBrowser-issued** sessionId; used from another session is rejected |
 | `iat` | integer (unix seconds) | issue time |
 | `exp` | integer (unix seconds) | `iat + 300` — TTL fixed at 300 seconds |
 
-`iat`/`exp` must be integers (`Number.isInteger`); otherwise `malformed`. **Fields wallet does not know are ignored** (FWL-072): an issuer may carry its own values — a spending cap, an order reference — inside the signed payload for its own audit. Wallet never reads them and has not judged amounts since FWL-055. (`max_total` used to be required; it is now just such a field.)
+`iat`/`exp` must be integers (`Number.isInteger`); otherwise `malformed`. **Fields FronyBrowser does not know are ignored** (FWL-072): an issuer may carry its own values — a spending cap, an order reference — inside the signed payload for its own audit. FronyBrowser never reads them and has not judged amounts since FWL-055. (`max_total` used to be required; it is now just such a field.)
 
 ## Verification order (fail-closed)
 
@@ -62,7 +62,7 @@ Payload:
 6. token already used → `reused`
 7. Pass → verification only. `used` is added by the caller (the `fill` handler) **only after the fill actually succeeds** (single-use, FWL-033) — a failed attempt (e.g. `element_not_actionable`) does not burn the grant, so the same grant can be retried.
 
-Three layers of defense: **signature** (forgery), **`exp` 300s** (replay window), **session binding + single-use** (replay). The `used` set lives only in the wallet process and is empty after a restart, but by then most tokens have already expired.
+Three layers of defense: **signature** (forgery), **`exp` 300s** (replay window), **session binding + single-use** (replay). The `used` set lives only in the FronyBrowser process and is empty after a restart, but by then most tokens have already expired.
 
 ## Failure codes seen by the caller
 

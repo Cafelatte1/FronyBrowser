@@ -20,7 +20,7 @@ export function liveEnv(): LiveEnv {
 export async function requireUnlocked(env: LiveEnv): Promise<void> {
   const h = (await (await fetch(`${env.server}/health`)).json()) as { vaultLocked?: boolean; vaultExists?: boolean };
   expect(h.vaultExists, '금고 파일이 없다 — 등록 페이지에서 먼저 저장').toBe(true);
-  expect(h.vaultLocked, '금고가 잠겨 있다 — `wallet unlock` 후 다시').toBe(false);
+  expect(h.vaultLocked, '금고가 잠겨 있다 — `vault unlock` 후 다시').toBe(false);
 }
 
 export type OriginProbe = {

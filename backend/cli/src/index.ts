@@ -1,16 +1,16 @@
 /**
  * 금고 등록·삭제·목록·unlock.
  *
- *   wallet set <group.subject.field> --type <card|phone|rrn|email|name|address|text> [--grant] [--public] [--label "<name>"]
- *   wallet rm <group.subject.field>
- *   wallet list
- *   wallet relabel            — 이름이 비어 있는 항목에 기본 이름을 지어 넣는다 (백업을 먼저 만든다, FWL-056)
- *   wallet relabel <group.subject.field> "<name>" — 그 항목의 이름만 바꾼다 (값은 다시 받지 않는다)
- *   wallet migrate-keys       — 두 조각이던 옛 키 이름을 `그룹.대상.항목`으로 옮긴다 (백업을 먼저 만든다, FWL-057)
- *   wallet unlock              — 서버의 /vault/unlock 호출 (admin 기기에서만)
- *   wallet handoff             — 재시작 직전에 /vault/handoff 호출: 다음 프로세스가 같은 만료로 unlock을 이어받는다 (FWL-042)
- *   wallet status              — 금고 상태(/health) + TEST MODE 토글 (데이터 디렉터리의 test-mode.json, 서버 머신에서)
- *   wallet keypad-template <sprite.png> --cells <w>x<h> --order <row/row/..> --out <name>
+ *   vault set <group.subject.field> --type <card|phone|rrn|email|name|address|text> [--grant] [--public] [--label "<name>"]
+ *   vault rm <group.subject.field>
+ *   vault list
+ *   vault relabel            — 이름이 비어 있는 항목에 기본 이름을 지어 넣는다 (백업을 먼저 만든다, FWL-056)
+ *   vault relabel <group.subject.field> "<name>" — 그 항목의 이름만 바꾼다 (값은 다시 받지 않는다)
+ *   vault migrate-keys       — 두 조각이던 옛 키 이름을 `그룹.대상.항목`으로 옮긴다 (백업을 먼저 만든다, FWL-057)
+ *   vault unlock              — 서버의 /vault/unlock 호출 (admin 기기에서만)
+ *   vault handoff             — 재시작 직전에 /vault/handoff 호출: 다음 프로세스가 같은 만료로 unlock을 이어받는다 (FWL-042)
+ *   vault status              — 금고 상태(/health) + TEST MODE 토글 (데이터 디렉터리의 test-mode.json, 서버 머신에서)
+ *   vault keypad-template <sprite.png> --cells <w>x<h> --order <row/row/..> --out <name>
  *                              — 스프라이트 키패드의 글리프 템플릿을 데이터 디렉터리의 keypads/<name>.json에 만든다 (FWL-073).
  *                                order는 스프라이트 셀 순서대로 보이는 숫자를 줄마다 슬래시로 나눈 것 (예: 8035/7426/19)
  *
@@ -37,7 +37,7 @@ function vaultPath(): string {
 
 function usage(): never {
   console.error(
-    'usage: wallet set <group.subject.field> --type <t> [--grant] [--public] [--label "<name>"] | wallet rm <group.subject.field> | wallet list | wallet relabel [<group.subject.field> "<name>"] | wallet migrate-keys | wallet unlock | wallet handoff | wallet status | wallet keypad-template <sprite.png> --cells <w>x<h> --order <row/row/..> --out <name>',
+    'usage: vault set <group.subject.field> --type <t> [--grant] [--public] [--label "<name>"] | vault rm <group.subject.field> | vault list | vault relabel [<group.subject.field> "<name>"] | vault migrate-keys | vault unlock | vault handoff | vault status | vault keypad-template <sprite.png> --cells <w>x<h> --order <row/row/..> --out <name>',
   );
   console.error(`  types: ${TYPES.join(' ')}`);
   process.exit(2);
@@ -199,7 +199,7 @@ async function main(): Promise<void> {
     if (res.ok && body.ok) {
       console.log(`ok: unlock 인계 파일을 남겼습니다 (${Math.round((body.remainingMs ?? 0) / 60_000)}분 남음). 10분 안에 재시작하세요`);
     } else {
-      console.error(`실패 (${res.status}) — 보관함이 잠겨 있거나 admin 권한이 없습니다. 재시작 뒤 wallet unlock이 필요합니다`);
+      console.error(`실패 (${res.status}) — 보관함이 잠겨 있거나 admin 권한이 없습니다. 재시작 뒤 vault unlock이 필요합니다`);
       process.exit(1);
     }
     return;

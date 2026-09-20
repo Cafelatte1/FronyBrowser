@@ -119,7 +119,7 @@ function main(): void {
       },
       () => {
         audit.append({ evt: 'vault_unlock', sid: null, client: 'handoff', traceId: null, origin: null, ok: false, source: 'handoff' });
-        console.warn('금고 unlock 인계 실패 — wallet unlock이 필요하다');
+        console.warn('금고 unlock 인계 실패 — vault unlock이 필요하다');
       },
     );
   }
@@ -168,7 +168,7 @@ function main(): void {
   });
   // origin별로 로그인까지 갔던 기동 조합 (FWL-065) — 호출자가 조합을 틀리면 세션을 열기 전에 막는다
   const originProfiles = createOriginProfiles(join(dataDir, 'origins.json'));
-  // 스프라이트 키패드 글리프 템플릿 (FWL-073) — `wallet keypad-template`이 만든 파일. fill마다 읽으므로 재시작 없이 추가된다
+  // 스프라이트 키패드 글리프 템플릿 (FWL-073) — `vault keypad-template`이 만든 파일. fill마다 읽으므로 재시작 없이 추가된다
   const keypadTemplates = (name: string) => readGlyphTemplate(join(dataDir, 'keypads', `${name}.json`));
   const handlers = createHandlers({ vault, sessions, targets: new Map([['browser', target]]), audit, grantKey, testMode, handoffFile, originProfiles, keypadTemplates });
 
@@ -195,7 +195,7 @@ function main(): void {
       : notUsedInLocalMode;
   if (staticKeys) {
     console.log(`auth: static keys (${staticKeys.length}) from WALLET_KEYS — key:${staticKeys.map((k) => k.name).join(', key:')}`);
-    if (adminClients.length === 0) console.warn('WALLET_ADMIN_CLIENTS is empty — the console login and wallet unlock will refuse every key');
+    if (adminClients.length === 0) console.warn('WALLET_ADMIN_CLIENTS is empty — the console login and vault unlock will refuse every key');
   }
 
   const vaultAdmin = createVaultAdmin({ vaultFile, sessionsDir, vault, audit });

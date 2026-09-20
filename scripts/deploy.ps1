@@ -45,9 +45,9 @@ try { $vaultOpen = -not (Invoke-RestMethod -Uri "$walletServer/health" -TimeoutS
 if ($vaultOpen -eq $null) {
     # /health did not answer, so the server is not up — there is nothing running to hand anything over.
     # Saying "key refused" here would send the next reader hunting an auth problem that does not exist.
-    "unlock handoff: not needed - no server answering at $walletServer, run 'wallet unlock' after restart"
+    "unlock handoff: not needed - no server answering at $walletServer, run 'vault unlock' after restart"
 } elseif ($vaultOpen -eq $false) {
-    "unlock handoff: not needed - the vault is already locked, run 'wallet unlock' after restart"
+    "unlock handoff: not needed - the vault is already locked, run 'vault unlock' after restart"
 } else {
     $keys = @()
     if ($env:FRONY_KEY)         { $keys += [pscustomobject]@{ name = "FRONY_KEY";         value = $env:FRONY_KEY } }
@@ -68,7 +68,7 @@ if ($vaultOpen -eq $null) {
     if (-not $handed) {
         # Loud on purpose. The deploy still succeeds, but the vault comes back locked and every fill
         # fails with vault_locked until someone types the master password.
-        "unlock handoff: ** FAILED ** - $(if ($keys.Count) { "no key was accepted" } else { "FRONY_KEY and FRONY_SERVICE_KEY are both unset" }); the vault will be LOCKED after restart, run 'wallet unlock'"
+        "unlock handoff: ** FAILED ** - $(if ($keys.Count) { "no key was accepted" } else { "FRONY_KEY and FRONY_SERVICE_KEY are both unset" }); the vault will be LOCKED after restart, run 'vault unlock'"
     }
 }
 

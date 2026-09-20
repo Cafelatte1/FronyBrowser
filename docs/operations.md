@@ -12,7 +12,7 @@ Home server reachable over Tailscale, single port `9420` for everything (MCP, in
 
 ## Launcher and environment
 
-Process manager: Windows Task Scheduler task **"FronyBrowser Server"**, registered by `scripts/register-task.ps1`. It starts **at boot** as the service account with `-LogonType S4U`, and retries 999 times a minute apart. The task must run as that same Windows account, because DPAPI is per-account (see below) — but it does not need an interactive logon to do so. It was `AtLogon` + `Interactive` until 2026-09-16 on two beliefs that were never measured and are both wrong: that S4U cannot reach the user DPAPI master key, and that headful Chrome cannot be launched from session 0. Measured that day, an S4U task decrypted a CurrentUser blob written by another session, the server picked its vault unlock back up from the handoff file across a restart, and a `browser = chrome`, `headless = false` session rendered a full page tree and a 988x653 screenshot from session 0. Meanwhile the old setting cost the thing it was protecting: after the Windows updates rebooted the machine twice on 2026-09-16, nothing logged on to a headless server, so the process never came back. The aggressive retry is for a different race — the launcher binds the Tailscale address (`WALLET_BIND`) and the boot trigger fires before Tailscale has one, so the first attempts die with `EADDRNOTAVAIL`; the sibling Frony services hit the same wall and settled on the same numbers. A reboot still leaves the vault locked, so someone runs `wallet unlock` afterwards — but now there is a process listening to run it against.
+Process manager: Windows Task Scheduler task **"FronyBrowser Server"**, registered by `scripts/register-task.ps1`. It starts **at boot** as the service account with `-LogonType S4U`, and retries 999 times a minute apart. The task must run as that same Windows account, because DPAPI is per-account (see below) — but it does not need an interactive logon to do so. It was `AtLogon` + `Interactive` until 2026-09-16 on two beliefs that were never measured and are both wrong: that S4U cannot reach the user DPAPI master key, and that headful Chrome cannot be launched from session 0. Measured that day, an S4U task decrypted a CurrentUser blob written by another session, the server picked its vault unlock back up from the handoff file across a restart, and a `browser = chrome`, `headless = false` session rendered a full page tree and a 988x653 screenshot from session 0. Meanwhile the old setting cost the thing it was protecting: after the Windows updates rebooted the machine twice on 2026-09-16, nothing logged on to a headless server, so the process never came back. The aggressive retry is for a different race — the launcher binds the Tailscale address (`WALLET_BIND`) and the boot trigger fires before Tailscale has one, so the first attempts die with `EADDRNOTAVAIL`; the sibling Frony services hit the same wall and settled on the same numbers. A reboot still leaves the vault locked, so someone runs `vault unlock` afterwards — but now there is a process listening to run it against.
 
 Launcher file `C:\Users\<account>\wallet-server.cmd` (outside the repo; start from `scripts/wallet-server.cmd.example`, `*.cmd` is git-ignored) sets the environment and starts the process; do not print its contents. Env vars it holds, all read in `backend/api/src/main.ts`:
 
@@ -46,7 +46,7 @@ Launcher file `C:\Users\<account>\wallet-server.cmd` (outside the repo; start fr
 constant time and never writes a token anywhere. Issuing or revoking a key is editing the launcher and restarting.
 The console login takes a key **name** as the username and its **token** as the password, and only a name listed
 in `WALLET_ADMIN_CLIENTS` (as `key:<name>`) gets in; five failures from one address lock that address out for
-15 minutes, which is what FronyAuth's `/admin/verify` did. `wallet unlock` and the deploy handoff use an admin key as
+15 minutes, which is what FronyAuth's `/admin/verify` did. `vault unlock` and the deploy handoff use an admin key as
 `FRONY_KEY`. What this mode does not give: expiry, OAuth, revocation without a restart, or a Funnel connector —
 those are FronyAuth's, and `WALLET_PUBLIC_URL` refuses to start alongside `WALLET_KEYS`.
 
@@ -64,14 +64,14 @@ scripts\deploy.ps1 -Tag vX.Y.Z
 
 ## Restart and health
 
-Restart: `scripts\deploy.ps1` (no `-Tag`), or `schtasks /End` + `schtasks /Run` on **"FronyBrowser Server"** directly. Health: `GET /health` → `{ ok, vaultLocked, vaultExists, vaultTtlMs }` (no auth required). A deploy restart comes back unlocked through the handoff below; a crash or reboot does not, and needs `wallet unlock` (`WALLET_SERVER`, `FRONY_KEY`, and admin membership).
+Restart: `scripts\deploy.ps1` (no `-Tag`), or `schtasks /End` + `schtasks /Run` on **"FronyBrowser Server"** directly. Health: `GET /health` → `{ ok, vaultLocked, vaultExists, vaultTtlMs }` (no auth required). A deploy restart comes back unlocked through the handoff below; a crash or reboot does not, and needs `vault unlock` (`WALLET_SERVER`, `FRONY_KEY`, and admin membership).
 
-Test Mode: `wallet status` (run on the server machine) prints the flag from `<data root>/test-mode.json` and adds the vault state from `/health` when `WALLET_SERVER` is set; `main.ts` also warns at start-up and the console shows a badge. `/health` deliberately does not carry it — agents read that route. Do not leave it on after a rehearsal: every grant-gated fill is silently skipped while it is on, and the response looks exactly like a real one, so a live purchase run would submit an empty PIN field.
+Test Mode: `vault status` (run on the server machine) prints the flag from `<data root>/test-mode.json` and adds the vault state from `/health` when `WALLET_SERVER` is set; `main.ts` also warns at start-up and the console shows a badge. `/health` deliberately does not carry it — agents read that route. Do not leave it on after a rehearsal: every grant-gated fill is silently skipped while it is on, and the response looks exactly like a real one, so a live purchase run would submit an empty PIN field.
 
 Four things to keep in mind operationally:
 
-- **DPAPI is per-account.** The account that ran `wallet set` and the account the service runs as must be the same Windows account, or decryption silently fails. Do not run this service as `SYSTEM`.
-- **Two-layer protection.** DPAPI guards data at rest; the unlock passphrase (TTL `WALLET_UNLOCK_TTL`) guards it in memory. A long TTL trades that second layer for less manual intervention. The deploy handoff (FWL-042) is the one exception: for the restart window only, the passphrase sits in `unlock-handoff.dpapi` under DPAPI alone; the file is deleted on the next start-up and ignored after 10 minutes. A crash or reboot writes no handoff, so those still need `wallet unlock`.
+- **DPAPI is per-account.** The account that ran `vault set` and the account the service runs as must be the same Windows account, or decryption silently fails. Do not run this service as `SYSTEM`.
+- **Two-layer protection.** DPAPI guards data at rest; the unlock passphrase (TTL `WALLET_UNLOCK_TTL`) guards it in memory. A long TTL trades that second layer for less manual intervention. The deploy handoff (FWL-042) is the one exception: for the restart window only, the passphrase sits in `unlock-handoff.dpapi` under DPAPI alone; the file is deleted on the next start-up and ignored after 10 minutes. A crash or reboot writes no handoff, so those still need `vault unlock`.
 - **No "type it yourself" safety valve.** CVV and payment passwords live in the vault for unattended operation; the only mitigations are the approval channel (v2) and a short-enough TTL.
 - **Stored login sessions expire.** Nothing to do: the next `session_begin` reports `storedLogin: true` but the page shows the login form, the agent logs in with the vault login keys, and `session_end(loggedIn=true)` stores the fresh session.
 
@@ -104,7 +104,7 @@ arrive per call from the calling service. Steps, on the server machine:
    login keys the first time, and `session_end(loggedIn=true)` creates `sessions/<slug>.dpapi` for the origin, which
    every later `session_begin` injects and every later `loggedIn=true` end refreshes.
 2. **Register the values** the site needs — for a form login `<site>.login.id` / `<site>.login.password`, and a
-   payment PIN key if it has one. Console, or `wallet set <key> --type <type>` on the server under the service
+   payment PIN key if it has one. Console, or `vault set <key> --type <type>` on the server under the service
    account. Every key is `group.subject.field` (FWL-057).
 3. **Tick `grant` on the payment keys** in the console. That is the only per-key rule left, and it is what stops a
    payment PIN being filled outside a checkout the calling service vouched for.
@@ -112,7 +112,7 @@ arrive per call from the calling service. Steps, on the server machine:
    DOM says which key is which) and the built-in glyph template does not read it (`keypad_unresolved` on every
    attempt): make a template for that site (FWL-073). Save the keypad's sprite PNG from the browser's devtools, note
    the cell size and the digit each cell shows, row by row, and on the server run
-   `wallet keypad-template <sprite.png> --cells 25x26 --order 8035/7426/19 --out <site>`. It writes
+   `vault keypad-template <sprite.png> --cells 25x26 --order 8035/7426/19 --out <site>`. It writes
    `<data root>/keypads/<site>.json`, which the server reads on every fill — no restart. The caller's playbook then
    adds `template: "<site>"` to the sprite keypad spec. The file holds glyph shapes, not values, so it needs no vault.
 5. Then the FronyShopping side: `platform add`, the playbook, and a scrubbed capture under its `docs/sites/<id>/`
